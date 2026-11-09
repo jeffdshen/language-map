@@ -1,4 +1,4 @@
-# Language Map — Design (draft)
+# Language Map — Design
 
 A vocab "world map" (mind map / skill tree / 2D game world) where each word is a
 character on the map. Placement encodes relationships (shared characters,
@@ -22,6 +22,7 @@ language-agnostic.
 - **Exploration:** fog of war with soft cap on open (revealed, unfinished) words.
   User controls: fog toggle (hidden vs. dimmed), fog scope (words only [default]
   vs. words + terrain), force-reveal via UI or search ("I already know this").
+  Default fog mode is *hidden*: only "?" spots next to explored words are visible.
 - **Progression:** 4 stages per word, each needs successes on 3 separate days
   (configurable); any stage can be self-marked done. Honor system.
   1. Listen — understand in a sentence (audio)
@@ -31,74 +32,126 @@ language-agnostic.
 
 ## Architecture
 ```
-pipeline/ (Python, offline)          app/ (TypeScript, Vite)
-  sources -> normalize -> relate  ->   data/*.json (committed, versioned)
-          -> layout -> sentences  ->   map renderer + quest UI + progress store
+pipeline/ (Python, offline)                 app/ (TypeScript, Vite, React)
+  sources -> words -> embed -> themes  ->     data/zh-en/*.json (committed)
+          -> relate -> layout             ->  canvas map + quest UI + local progress
+          -> sentences -> export/preview
 ```
+The app has no backend. It is a static site that loads the committed pack and stores
+progress in the browser.
 
 ### Data sources (open licenses)
 | Data | Source | License |
 |---|---|---|
-| HSK 3.0 words, pinyin, POS, freq, radical | drkameleon/complete-hsk-vocabulary | MIT |
-| Definitions / extra readings | CC-CEDICT | CC BY-SA 4.0 |
-| Example sentences (+ English) | Tatoeba (cmn↔eng) | CC BY 2.0 FR |
-| Character decomposition (later) | Make Me a Hanzi / IDS | LGPL / various |
-| Audio v1 | Browser Web Speech API (zh-CN) | n/a |
-| Audio later | Pre-generated TTS, bundled | TBD |
+| HSK 3.0 words, levels, POS, pinyin | ivankra/hsk30 | MIT |
+| English glosses, traditional forms | CC-CEDICT via drkameleon/complete-hsk-vocabulary | CC BY-SA 4.0 |
+| Example sentences (+ English) | Tatoeba cmn↔eng (pinned npm snapshot) | CC BY 2.0 FR |
+| Semantic vectors (build time only) | ConceptNet Numberbatch 17.06 | CC BY-SA 4.0 |
+| Word frequency | wordfreq | CC BY-SA 4.0 (data) |
+| Audio | Browser Web Speech API (zh-CN) | n/a |
+
+All inputs are pinned with sha256 checksums in `pipeline/sources.lock.json`. The
+generated pack is CC BY-SA 4.0 (see `ATTRIBUTION.md`).
+
+### Pack format
+The format is documented in `pipeline/README.md`.
+- `manifest.json`: levels with ring radii, starter words, `layoutVersion`, `contentHash`, sources.
+- `words.json`: columnar rows `id, hanzi, pinyin, level, pos, theme, x, y, anchor, freq,
+  glosses, neighbors, trad, alts`.
+- `regions.json`: themes, label positions, ring radii and per-ring sector boundary angles.
+- `sentences.json`: segmented sentences with per-token pinyin and HSK word links (loaded lazily).
+
+Word ids are the official HSK ids (e.g. `L1-0194`), because some hanzi appear more than once.
+Progress is keyed by these ids, so re-layouts don't lose progress.
 
 ### Generic data model (language-agnostic)
-- `Word { id, form, reading, glosses[], level, pos[], freq, components[] }`
-  (components = characters for zh; morphemes/roots for other languages)
-- `Edge { a, b, kind: shared_component | semantic | ..., weight }`
-- `Region { id, name, theme, polygon, biome }` (semantic cluster → biome)
-- `Placement { wordId, x, y, regionId, anchorWordId }`
-- `Sentence { id, text, reading, translation, wordIds[], source, license }`
-- `LanguagePack { meta, words, edges, regions, placements, sentences }`
-- Progress (client only): `{ wordId, revealed, stages[4]: { days: date[], selfMarked } }`
+- `Word { id, form, reading, glosses[], level, pos, freq, theme, x, y, anchor, neighbors[] }`
+  (for zh, a word's characters are its components; another language could use morphemes or roots)
+- Links are derived at load time:
+  - **anchor**: the simpler word it branches from
+  - **children**: words that branch from it
+  - **neighbors**: semantic neighbors
+  - **shared characters**: an index from character to words
+- `Region { theme, name, color, icon, label position }` plus ring/sector geometry for terrain.
+- `Sentence { id, en_id, en, seg[] }`, where tokens link to words and carry pinyin.
+- Progress (client only): `{ wordId: { revealed, stages[4]: { days[], marked?, completed? } } }`
 
-### Layout pipeline (deterministic, seeded)
-1. **Relations:** shared-character edges; semantic edges from embeddings of
-   word + glosses (multilingual sentence-embedding model, pinned version),
-   kNN graph.
-2. **Regions:** cluster embeddings into themed regions (food, travel, emotion,
-   work, nature, …); each region is an angular sector/biome.
-3. **Radial levels:** HSK level sets distance from center (HSK1 core → n7 frontier).
-4. **Anchoring:** each outer word attaches to its most related inner word
-   (shared char > semantic) → skill-tree threads outward.
-5. **Placement:** constrained force layout (radius band + sector + anchors),
-   collision removal, fixed seed. Output committed; diffs reviewable.
-6. **Stability:** re-runs keep existing positions unless explicitly re-laid out
-   (layout versioning), so users' mental maps don't break.
+### Layout pipeline (deterministic)
+1. **Embeddings:** each word gets a Numberbatch vector for the Chinese word, blended with the
+   vectors of its English glosses.
+2. **Regions:** 17 curated themes (`pipeline/config/zh-en/themes.json`). Words are assigned
+   zero-shot by similarity to keyword centroids, with part-of-speech rules and refinement passes.
+   Each theme is an angular sector whose width follows its word count per ring.
+3. **Radial levels:** the HSK level sets the ring (HSK 1 core → HSK 7–9 frontier). Within a ring,
+   more frequent words sit further in.
+4. **Anchoring:** each word attaches to the best lower-level word. The score combines meaning,
+   idf-weighted shared characters, containment (e.g. 看 → 看见) and same region.
+5. **Placement:** a spectral order within each region and anchor/neighbor springs set the angle,
+   then collisions are resolved (minimum distance 1). The output is committed and diffable.
+6. **Stability:** `layoutVersion` is bumped when positions move; progress is keyed by word id.
 
 ### Sentence selection
-- For each word, choose N sentences from Tatoeba whose other words are mostly
-  at or below the word's level (comprehensibility score), with length limits.
-- Segmentation via jieba (pinned) + HSK lexicon; deterministic ranking/tie-breaks.
-- Words with no good sentence are flagged in a report (later: curated/LLM fill,
-  reviewed and committed).
+- Up to 6 Tatoeba sentences per word, ranked by comprehensibility: the other words should be at
+  or below the word's level. Length limits and deterministic tie-breaks apply.
+- Sentences are segmented with jieba plus the HSK lexicon, readings are disambiguated with
+  pypinyin, and only simplified-script sentences are kept.
+- Coverage by level is reported in `pipeline/reports/zh-en.md`. Words without a sentence fall back
+  to word-only practice in the sentence stages.
 
-### App
-- **Map:** pan/zoom canvas (PixiJS or similar), level-of-detail (regions → clusters
-  → words), fog layer, region labels.
-- **Word "character":** hanzi + pinyin nameplate; look hints at meaning via region
-  biome, POS-based shape/icon, neighbors.
-- **Word panel:** meanings, shared-character links ("explore hints"),
-  neighbors, stage progress, start quest, mark known.
-- **Quest:** per stage, show today's example (sentence/audio/word), user
-  self-grades; one success per calendar day counts.
-- **Reveal logic:** finishing a stage/word reveals anchored + strongly linked
-  neighbors; suggestions prefer inner levels; soft cap on open words shows a
-  warning/nudge, never blocks.
-- **Search:** hanzi / pinyin (tone-insensitive) / English; reveal or fly to result.
-- **Settings:** fog mode, fog scope, days per stage, open-word soft cap.
-- **Progress:** IndexedDB, JSON export/import.
+### App (as built)
+- **Map:** a Canvas 2D renderer (no game engine).
+  - The terrain bitmap is rasterized once at load.
+  - Level of detail: region labels when zoomed out, then markers, then hanzi labels (scale ≥ 9),
+    then pinyin (scale ≥ 18).
+  - Uses a spatial grid for culling and hit testing, plus pan/zoom/pinch and animated fly-to.
+- **Word "character":**
+  - The marker shape gives the part of speech.
+  - The color and fill give the state: hidden "?", revealed, active (with a due badge), learned.
+  - A hanzi + pinyin nameplate.
+  - Selecting a word highlights its anchor, children and neighbor links.
+- **Visibility states:** hidden → frontier ("?") → revealed → active (quest accepted) → learned.
+  - A hidden word becomes frontier when it is directly linked (anchor, child, or one of the top 4
+    neighbors) to an explored word and is at most one level further out. The frontier therefore
+    grows ring by ring.
+- **Word panel:**
+  - Meanings, quest stages (practice / mark done), example sentences.
+  - "Explore" section: branches from, leads to, per-character "N hidden · reveal next",
+    similar meaning.
+  - On mobile it is a bottom sheet.
+- **Quest:**
+  - A modal per stage: listen or read, show the answer (hanzi, pinyin, English, highlighted
+    word), then self-grade.
+  - One success per learning day counts. The day rolls over at 04:00 local time (configurable).
+  - A stage is done after N successful days or when self-marked. Its completion is locked in,
+    so raising "days per stage" later doesn't undo finished stages.
+- **Reveal logic:**
+  - Finishing a stage reveals 1 linked word; learning a word reveals 2. Lower levels are
+    preferred, then link strength and frequency.
+  - Auto-reveal stops at the soft cap on open words. Manual reveal ("?", 🔭 Discover, search,
+    hints) always works but shows a nudge when over the cap.
+- **Search:** hanzi / pinyin (tone marks optional) / English. Results fly to the word.
+- **Settings:**
+  - Fog mode and scope, days per stage, open-word soft cap, auto-reveal, pinyin on the map,
+    TTS rate, day rollover hour.
+  - Bulk "known up to HSK n".
+  - Export/import/reset.
+- **Progress:** IndexedDB (localStorage fallback), debounced writes, versioned JSON export.
+  Saves carry a monotonic `updatedAt`; open tabs sync via `BroadcastChannel` (newest save wins,
+  stale writes are dropped). If an existing save can't be read, writes are disabled for the
+  session and a warning is shown, so progress is never overwritten by a fresh start.
+  Imports are validated.
 
 ## Milestones
-1. **M0 Repo scaffold:** monorepo (`pipeline/`, `app/`, `data/`), CI, licenses/attribution.
-2. **M1 Data:** ingest HSK 3.0 + CC-CEDICT → normalized words; shared-char edges.
-3. **M2 Layout v1:** radial levels + semantic regions + anchoring → placements JSON;
-   debug visualization.
-4. **M3 Map app:** render map, pan/zoom, word nodes, word panel, search.
-5. **M4 Progress:** stages, quests (word-only stages first), local storage, fog/reveal.
-6. **M5 Sentences:** Tatoeba selection + TTS → sentence-based stages.
-7. **M6 Polish:** biomes/terrain, appearance hints, assets/tilemaps, sharing.
+1. ✅ **M0 Repo scaffold:** monorepo (`pipeline/`, `app/`, `data/`), CI, licenses/attribution.
+2. ✅ **M1 Data:** HSK 3.0 + CC-CEDICT → normalized words; shared-character links.
+3. ✅ **M2 Layout v1:** radial levels + semantic regions + anchoring → placements; preview image.
+4. ✅ **M3 Map app:** map rendering, pan/zoom, word nodes, word panel, search.
+5. ✅ **M4 Progress:** stages, quests, local storage, fog/reveal, soft cap.
+6. ✅ **M5 Sentences:** Tatoeba selection + browser TTS → sentence-based stages.
+7. **M6 Polish (next):**
+   - Tile/sprite assets and biome art.
+   - Character decomposition hints (Make Me a Hanzi).
+   - Pre-generated audio.
+   - Curated sentences for low-coverage words.
+   - Label collision avoidance at mid zoom.
+   - More language packs.
