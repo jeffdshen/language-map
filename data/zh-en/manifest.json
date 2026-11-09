@@ -1,7 +1,7 @@
 {
- "schema": 1,
+ "schema": 2,
  "pack": "zh-en",
- "title": "Mandarin Chinese → English (HSK 3.0)",
+ "title": "Mandarin Chinese → English (HSK 3.0, 2025 syllabus)",
  "target": {
   "lang": "zh-Hans",
   "name": "中文",
@@ -11,98 +11,89 @@
   "lang": "en",
   "name": "English"
  },
- "layoutVersion": 1,
- "contentHash": "5f8b143ee9a7e716",
+ "layoutVersion": 2,
+ "contentHash": "905655f8e1c66e64",
  "files": {
   "words": "words.json",
-  "regions": "regions.json",
-  "sentences": "sentences.json"
+  "world": "world.json",
+  "sentences": "sentences.json",
+  "legacy": "legacy-ids.json"
  },
  "levels": [
   {
    "level": 1,
    "label": "HSK 1",
-   "inner": 5.0,
-   "outer": 23.793,
-   "count": 500
+   "count": 300,
+   "regions": 10
   },
   {
    "level": 2,
    "label": "HSK 2",
-   "inner": 23.793,
-   "outer": 36.102,
-   "count": 772
+   "count": 200,
+   "regions": 6
   },
   {
    "level": 3,
    "label": "HSK 3",
-   "inner": 36.102,
-   "outer": 45.919,
-   "count": 973
+   "count": 500,
+   "regions": 13
   },
   {
    "level": 4,
    "label": "HSK 4",
-   "inner": 45.919,
-   "outer": 53.596,
-   "count": 1000
+   "count": 1000,
+   "regions": 20
   },
   {
    "level": 5,
    "label": "HSK 5",
-   "inner": 53.596,
-   "outer": 60.188,
-   "count": 1071
+   "count": 1600,
+   "regions": 27
   },
   {
    "level": 6,
    "label": "HSK 6",
-   "inner": 60.188,
-   "outer": 66.216,
-   "count": 1140
+   "count": 1800,
+   "regions": 26
   },
   {
    "level": 7,
    "label": "HSK 7–9",
-   "inner": 66.216,
-   "outer": 88.279,
-   "count": 5636
+   "count": 5600,
+   "regions": 35
   }
  ],
- "worldRadius": 88.279,
- "coreRadius": 5.0,
  "starters": [
-  45,
-  66,
-  70,
-  91,
-  137,
-  191,
-  212,
-  314,
-  379,
-  475
+  26,
+  138,
+  140,
+  202,
+  261,
+  281,
+  283,
+  290
  ],
  "counts": {
-  "words": 11092,
-  "sentences": 17616
+  "words": 11000,
+  "sentences": 16822,
+  "regions": 137
  },
  "sources": [
   {
+   "key": "hsk2025",
+   "name": "HearMandarin HSK 3.0 word list (official 2025 exam syllabus, version 2026-09-04)",
+   "url": "https://raw.githubusercontent.com/wzperson/hearmandarin-hsk-3-0-word-list/57b5790d5c326e85b0467305acafa19e8a0ff14e/hsk-3-0-words.csv",
+   "homepage": "https://hearmandarin.com/datasets/",
+   "license": "CC BY 4.0",
+   "sha256": "f88736ec0d206869d4b3ea495c432e0ab048a3072867ec0df3be08542ca61d42"
+  },
+  {
    "key": "hsk30",
-   "name": "ivankra/hsk30 (HSK 3.0 word list)",
+   "name": "ivankra/hsk30 (2021 GF 0025 list; legacy save ids and alternate forms)",
    "url": "https://raw.githubusercontent.com/ivankra/hsk30/4ff9e3915ce87baaecd7ebe263085573a4ea3192/hsk30.csv",
    "homepage": "https://github.com/ivankra/hsk30",
    "license": "MIT",
    "sha256": "8c2b73f74776240bcf154624730fc6fb2c42c254d5c5d0f88943878b8e575b9b"
-  },
-  {
-   "key": "hsk30-chars",
-   "name": "ivankra/hsk30 (HSK 3.0 character list)",
-   "url": "https://raw.githubusercontent.com/ivankra/hsk30/4ff9e3915ce87baaecd7ebe263085573a4ea3192/hsk30-chars.csv",
-   "homepage": "https://github.com/ivankra/hsk30",
-   "license": "MIT",
-   "sha256": "8c5957108e6dafd120be10518a827a4d834ea3ce29acbfedeff1022cd7d05280"
   },
   {
    "key": "complete-hsk",
@@ -131,52 +122,82 @@
  ],
  "stats": {
   "embedding": {
-   "zh+en": 8496,
-   "zh": 5,
-   "en": 2589,
-   "chars": 2,
+   "zh+en": 8452,
+   "zh": 0,
+   "en": 2548,
+   "chars": 0,
    "none": 0
-  },
-  "layout": {
-   "min_nn": 0.8928605714219886,
-   "p05_nn": 0.9920181449953404,
-   "median_nn": 0.9984988733093296,
-   "overlaps<0.8": 0,
-   "radius": 87.88340685248838
   },
   "sentences": {
    "tatoeba_pairs_simplified": 33506,
-   "sentences_used": 17616,
+   "sentences_used": 16822,
    "coverage_by_level": {
     "1": [
-     483,
-     500
+     295,
+     300
     ],
     "2": [
-     719,
-     772
+     194,
+     200
     ],
     "3": [
-     872,
-     973
+     476,
+     500
     ],
     "4": [
-     816,
+     906,
      1000
     ],
     "5": [
-     769,
-     1071
+     1312,
+     1600
     ],
     "6": [
-     719,
-     1140
+     1121,
+     1800
     ],
     "7": [
-     2283,
-     5636
+     2021,
+     5600
     ]
    }
+  },
+  "world": {
+   "regions": 137,
+   "grid": [
+    281,
+    281
+   ],
+   "land_cells": 53363,
+   "band_radii": [
+    2.6,
+    20.54,
+    26.45,
+    37.17,
+    52.56,
+    70.53,
+    86.38,
+    128.53
+   ],
+   "density_by_distance": [
+    0.227,
+    0.231,
+    0.229,
+    0.23,
+    0.23,
+    0.209,
+    0.194,
+    0.175
+   ],
+   "mean_distance_by_level": [
+    14.0,
+    23.6,
+    32.2,
+    45.4,
+    62.0,
+    78.7,
+    108.7
+   ]
   }
  }
 }

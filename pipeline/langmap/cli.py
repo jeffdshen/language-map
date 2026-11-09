@@ -7,8 +7,6 @@ import logging
 import time
 import warnings
 
-import numpy as np
-
 from .paths import DATA_DIR, REPORTS_DIR
 
 
@@ -18,11 +16,11 @@ def build(pack: str = "zh-en", preview: bool = True) -> None:
     jieba.setLogLevel(logging.WARNING)
     from .embed import dump_stats, embed_words, embedding_digest
     from .export import export_pack, write_report
-    from .layout import layout, layout_stats
     from .relate import anchors, semantic_neighbors
     from .sentences import select_sentences
     from .themes import assign_themes, load_theme_config
-    from .words import load_char_levels, load_words
+    from .words import char_levels, legacy_id_map, load_words
+    from .world import build_world, world_stats
 
     t0 = time.time()
 
@@ -30,7 +28,8 @@ def build(pack: str = "zh-en", preview: bool = True) -> None:
         print(f"[{time.time() - t0:6.1f}s] {msg}", flush=True)
 
     words = load_words()
-    step(f"words: {len(words)}")
+    legacy = legacy_id_map(words)
+    step(f"words: {len(words)} (legacy ids mapped: {len(legacy)})")
     cfg = load_theme_config(pack)
     themes = cfg["themes"]
     emb, emb_stats = embed_words(words, themes)
@@ -40,38 +39,28 @@ def build(pack: str = "zh-en", preview: bool = True) -> None:
     neighbors = semantic_neighbors(emb)
     anchor, _ = anchors(words, emb, theme)
     step("relations computed")
-    P, geo = layout(words, emb, theme, anchor, neighbors, len(themes))
-    lstats = layout_stats(P)
-    step(f"layout: {lstats}")
-    sentences, by_word, sstats = select_sentences(words, load_char_levels())
+    world = build_world(words, emb, theme, anchor, neighbors, themes)
+    step(f"world: {len(world.regions)} regions, {world_stats(world, words)}")
+    sentences, by_word, sstats = select_sentences(words, char_levels(words))
     step(f"sentences: {sstats['sentences_used']}")
 
     stats = {
         "embedding": {k: v for k, v in emb_stats.items() if k != "vectors"},
-        "layout": lstats,
         "sentences": sstats,
     }
     out_dir = DATA_DIR / pack
     manifest = export_pack(
-        out_dir, words, theme, P, anchor, neighbors, geo, themes, sentences, by_word, stats
+        out_dir, words, theme, anchor, neighbors, world, themes, sentences, by_word, legacy, stats
     )
-    write_report(REPORTS_DIR / f"{pack}.md", words, theme, anchor, themes, manifest)
+    write_report(REPORTS_DIR / f"{pack}.md", words, theme, world, themes, manifest)
     step(f"wrote {out_dir} (contentHash={manifest['contentHash']})")
     if preview:
-        from .preview import render_preview
+        from .preview import render_closeup, render_preview
 
-        render_preview(
-            REPORTS_DIR / f"{pack}-preview.png",
-            P,
-            [w.hanzi for w in words],
-            np.array([w.level for w in words]),
-            theme,
-            anchor,
-            geo,
-            themes,
-            size=1600,
-        )
-        step("preview rendered")
+        hanzi = [w.hanzi for w in words]
+        render_preview(REPORTS_DIR / f"{pack}-preview.png", world, theme, themes)
+        render_closeup(REPORTS_DIR / f"{pack}-closeup.png", world, hanzi)
+        step("previews rendered")
 
 
 def main() -> None:

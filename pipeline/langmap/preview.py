@@ -1,14 +1,13 @@
-"""Debug/review preview of the layout as a PNG (not used by the app)."""
+"""Debug/review previews of the world as PNGs (not used by the app)."""
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .layout import Geometry, _unwrap
+from .world import GROUND, World
 
 _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
@@ -29,73 +28,87 @@ def _hex(c: str) -> tuple[int, int, int]:
     return tuple(int(c[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
 
 
+def _base(world: World, cell: int) -> Image.Image:
+    """Ground colors with region borders (darker where the HSK level changes)."""
+    codes = sorted(GROUND)
+    lut = np.array([_hex(GROUND[c][1]) for c in codes], dtype=np.uint8)
+    gi = np.searchsorted(np.array(codes), world.ground)
+    rgb = lut[gi].repeat(cell, axis=0).repeat(cell, axis=1).astype(np.float64)
+    reg = world.region_grid
+    level = np.array([r["level"] for r in world.regions] + [0])[reg]
+    h, w = reg.shape
+    for dy, dx in ((0, 1), (1, 0)):
+        a = reg[: h - dy, : w - dx]
+        b = reg[dy:, dx:]
+        edge = (a != b) & (a >= 0) & (b >= 0)
+        lv = level[: h - dy, : w - dx] != level[dy:, dx:]
+        for y, x in zip(*np.nonzero(edge)):
+            dark = 0.35 if lv[y, x] else 0.7
+            if dx:
+                sl = np.s_[y * cell : (y + 1) * cell, (x + 1) * cell - 1 : (x + 1) * cell + 1]
+            else:
+                sl = np.s_[(y + 1) * cell - 1 : (y + 1) * cell + 1, x * cell : (x + 1) * cell]
+            rgb[sl] *= dark
+    return Image.fromarray(rgb.clip(0, 255).astype(np.uint8))
+
+
 def render_preview(
-    out: Path,
-    P: np.ndarray,
-    hanzi: list[str],
-    levels: np.ndarray,
-    theme: np.ndarray,
-    anchor: np.ndarray,
-    geo: Geometry,
-    themes: list[dict],
-    size: int = 2400,
-    label_levels: int = 1,
+    out: Path, world: World, theme: np.ndarray, themes: list[dict], cell: int = 6
 ) -> None:
-    R = float(geo.radii[-1]) + 4
-    scale = size / (2 * R)
-
-    def to_px(x, y):
-        return (x + R) * scale, (y + R) * scale
-
-    # Terrain: theme by (r, theta) via sector bounds.
-    g = 600
-    ys, xs = np.mgrid[0:g, 0:g]
-    wx = (xs + 0.5) / g * 2 * R - R
-    wy = (ys + 0.5) / g * 2 * R - R
-    rr = np.hypot(wx, wy).ravel()
-    th = _unwrap(np.arctan2(wy, wx).ravel(), geo.theta0)
-    tid = np.full(rr.shape, -1)
-    for t in range(len(themes)):
-        lo, hi = geo.sector_bounds(np.maximum(rr, geo.mids[0]), np.full(rr.shape, t))
-        tid[(th >= lo) & (th < hi)] = t
-    colors = np.array([_hex(t["color"]) for t in themes], dtype=np.float64)
-    img_arr = np.zeros((g * g, 3))
-    img_arr[:] = (40, 70, 110)
-    land = rr <= geo.radii[-1] + 1.5
-    img_arr[land] = colors[tid[land]] * 0.75 + 255 * 0.25
-    core = rr <= geo.radii[0]
-    img_arr[core] = (245, 240, 225)
-    terrain = Image.fromarray(img_arr.reshape(g, g, 3).astype(np.uint8)).resize((size, size))
-    img = terrain.convert("RGB")
+    """Whole-world overview: terrain, region borders, words as dots, region names."""
+    img = _base(world, cell)
     d = ImageDraw.Draw(img, "RGBA")
-
-    for rad in geo.radii:
-        x0, y0 = to_px(-rad, -rad)
-        x1, y1 = to_px(rad, rad)
-        d.ellipse([x0, y0, x1, y1], outline=(60, 60, 60, 90), width=2)
-
-    for i, a in enumerate(anchor.tolist()):
-        if a >= 0:
-            d.line([to_px(*P[i]), to_px(*P[a])], fill=(80, 60, 40, 50), width=1)
-
-    dot = max(2, int(scale * 0.35))
-    for i in range(len(P)):
-        x, y = to_px(*P[i])
+    colors = np.array([_hex(t["color"]) for t in themes])
+    for i, (x, y) in enumerate(world.pos.tolist()):
+        cx, cy = (x - world.x0 + 0.5) * cell, (y - world.y0 + 0.5) * cell
         c = tuple(int(v * 0.55) for v in colors[theme[i]])
-        d.ellipse([x - dot, y - dot, x + dot, y + dot], fill=c + (255,))
+        d.rectangle(
+            [cx - cell * 0.32, cy - cell * 0.32, cx + cell * 0.32, cy + cell * 0.32],
+            fill=c + (255,),
+        )
+    f = _font(max(10, int(cell * 1.5)))
+    for r in world.regions:
+        cx, cy = (r["x"] - world.x0 + 0.5) * cell, (r["y"] - world.y0 + 0.5) * cell
+        d.text(
+            (cx, cy),
+            r["zh"],
+            font=f,
+            fill=(20, 20, 20, 255),
+            anchor="mm",
+            stroke_width=2,
+            stroke_fill=(255, 255, 255, 200),
+        )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").quantize(colors=128, dither=0).save(out, optimize=True)
 
-    f = _font(max(10, int(scale * 0.8)))
-    for i in np.where(levels <= label_levels)[0]:
-        x, y = to_px(*P[i])
-        d.text((x, y - dot), hanzi[i], font=f, fill=(20, 20, 20, 255), anchor="md")
 
-    ft = _font(int(size / 55))
-    for t, spec in enumerate(themes):
-        mid_r = float(geo.mids[4])
-        lo, hi = geo.sector_bounds(np.array([mid_r]), np.array([t]))
-        a = (lo[0] + hi[0]) / 2
-        x, y = to_px(mid_r * math.cos(a), mid_r * math.sin(a))
-        d.text((x, y), f"{spec['zh']} {spec['en']}", font=ft, fill=(0, 0, 0, 200), anchor="mm")
-
+def render_closeup(
+    out: Path, world: World, hanzi: list[str], radius: int = 24, cell: int = 28
+) -> None:
+    """The middle of the map at roughly game scale, with every word labeled."""
+    full = _base(world, cell)
+    cx, cy = -world.x0, -world.y0
+    box = (
+        (cx - radius) * cell,
+        (cy - radius) * cell,
+        (cx + radius + 1) * cell,
+        (cy + radius + 1) * cell,
+    )
+    img = full.crop(box)
+    d = ImageDraw.Draw(img, "RGBA")
+    f = _font(int(cell * 0.9))
+    for i, (x, y) in enumerate(world.pos.tolist()):
+        if abs(x) > radius or abs(y) > radius:
+            continue
+        px, py = (x + radius + 0.5) * cell, (y + radius + 0.5) * cell
+        d.text(
+            (px, py),
+            hanzi[i],
+            font=f,
+            fill=(20, 20, 20, 255),
+            anchor="mm",
+            stroke_width=2,
+            stroke_fill=(255, 255, 255, 220),
+        )
     out.parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").quantize(colors=128, dither=0).save(out, optimize=True)

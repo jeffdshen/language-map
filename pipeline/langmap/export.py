@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
+import re
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
-from .layout import LAYOUT_VERSION, Geometry
 from .sources import load_lock
 from .words import LEVEL_LABELS, Word, pos_category
+from .world import GROUND, LAYOUT_VERSION, World, region_runs, world_stats
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 WORD_FIELDS = [
     "id",
@@ -23,6 +23,7 @@ WORD_FIELDS = [
     "level",
     "pos",
     "theme",
+    "region",
     "x",
     "y",
     "anchor",
@@ -32,80 +33,62 @@ WORD_FIELDS = [
     "trad",
     "alts",
 ]
+REGION_FIELDS = ["id", "level", "kind", "theme", "zh", "en", "count", "cells", "x", "y", "color"]
+N_STARTERS = 8
 
 
 def _dumps(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
-def _write_rows(path: Path, header: dict, rows: list, extra: dict | None = None) -> str:
-    """JSON object with one row per line (readable diffs). Returns sha256."""
-    parts = ["{"]
-    for k, v in header.items():
-        parts.append(f"{_dumps(k)}:{_dumps(v)},")
-    parts.append('"rows":[')
-    parts.append(",\n".join(_dumps(r) for r in rows))
-    parts.append("]")
-    for k, v in (extra or {}).items():
-        parts.append(f",\n{_dumps(k)}:[")
-        parts.append(",\n".join(_dumps(x) for x in v))
-        parts.append("]")
-    parts.append("}\n")
-    text = "\n".join(parts[:2]) + "\n" + "\n".join(parts[2:])
+def _write_lists(path: Path, header: dict, lists: dict[str, list]) -> str:
+    """JSON object: compact header keys, then each list with one item per line (readable
+    diffs). Returns sha256 of the text."""
+    items = [f"{_dumps(k)}:{_dumps(v)}" for k, v in header.items()]
+    items += [f"{_dumps(k)}:[\n" + ",\n".join(_dumps(x) for x in v) + "]" for k, v in lists.items()]
+    text = "{\n" + ",\n".join(items) + "}\n"
     path.write_text(text, encoding="utf-8")
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def pick_starters(words: list[Word], theme: np.ndarray, k: int, limit: int = 10) -> list[int]:
-    """Most frequent HSK 1 word in each of the themes with the most HSK 1 words."""
-    l1 = [w for w in words if w.level == 1]
-    counts = Counter(int(theme[w.index]) for w in l1)
-    ranked = sorted(counts, key=lambda t: (-counts[t], t))[:limit]
-    out = []
-    for t in ranked:
-        best = min((w for w in l1 if theme[w.index] == t), key=lambda w: (-w.freq, w.index))
-        out.append(best.index)
-    return sorted(out)
+def pick_starters(words: list[Word], world: World, limit: int = N_STARTERS) -> list[int]:
+    """The HSK 1 words nearest the spawn point (the most frequent words sit there)."""
+    d = np.hypot(world.pos[:, 0], world.pos[:, 1])
+    l1 = [w.index for w in words if w.level == 1]
+    return sorted(sorted(l1, key=lambda i: (float(d[i]), -words[i].freq, i))[:limit])
 
 
-def region_labels(geo: Geometry, k: int) -> list[list[dict]]:
-    """Label anchor points per theme: one in the inner rings, one in the frontier."""
-    out = []
-    for t in range(k):
-        labels = []
-        for band, size in ((2, 1.0), (6, 1.6)):
-            r = float(geo.mids[band])
-            lo = float(np.interp(r, geo.mids, geo.bounds[:, t]))
-            hi = float(np.interp(r, geo.mids, geo.bounds[:, t + 1]))
-            a = (lo + hi) / 2
-            labels.append(
-                {
-                    "x": round(r * math.cos(a), 2),
-                    "y": round(r * math.sin(a), 2),
-                    "angle": round(a, 4),
-                    "arc": round((hi - lo) * r, 2),
-                    "size": size,
-                }
-            )
-        out.append(labels)
-    return out
+def legacy_bands(legacy: dict[str, str]) -> dict[str, list[int]]:
+    """Old ids ``L<band>-<seq>`` -> per-band arrays of new word numbers (``w00157`` -> 157;
+    0 = no match), indexed by seq - 1."""
+    out: dict[str, list[int]] = {}
+    for old, new in sorted(legacy.items()):
+        m = re.fullmatch(r"(L\d)-(\d+)", old)
+        if not m:
+            continue
+        arr = out.setdefault(m.group(1), [])
+        seq = int(m.group(2))
+        arr.extend([0] * (seq - len(arr)))
+        arr[seq - 1] = int(new.lstrip("w"))
+    return dict(sorted(out.items()))
 
 
 def export_pack(
     out_dir: Path,
     words: list[Word],
     theme: np.ndarray,
-    P: np.ndarray,
     anchor: np.ndarray,
     neighbors: np.ndarray,
-    geo: Geometry,
+    world: World,
     themes_cfg: list[dict],
     sentences: list[dict],
     by_word: list[list[int]],
+    legacy: dict[str, str],
     stats: dict,
 ) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
-    k = len(themes_cfg)
+    for stale in ("regions.json",):
+        (out_dir / stale).unlink(missing_ok=True)
 
     rows = []
     for w in words:
@@ -118,8 +101,9 @@ def export_pack(
                 w.level,
                 pos_category(w),
                 int(theme[i]),
-                float(P[i, 0]),
-                float(P[i, 1]),
+                int(world.region[i]),
+                int(world.pos[i, 0]),
+                int(world.pos[i, 1]),
                 int(anchor[i]),
                 w.freq,
                 w.glosses,
@@ -128,68 +112,87 @@ def export_pack(
                 w.alts,
             ]
         )
-    words_hash = _write_rows(out_dir / "words.json", {"fields": WORD_FIELDS}, rows)
+    words_hash = _write_lists(out_dir / "words.json", {"fields": WORD_FIELDS}, {"rows": rows})
 
-    labels = region_labels(geo, k)
-    regions = {
-        "themes": [
-            {
-                "key": t["key"],
-                "zh": t["zh"],
-                "en": t["en"],
-                "biome": t["biome"],
-                "color": t["color"],
-                "count": int(np.sum(theme == j)),
-                "labels": labels[j],
-            }
-            for j, t in enumerate(themes_cfg)
-        ],
-        "geometry": {
-            "theta0": round(geo.theta0, 6),
-            "radii": [round(float(r), 3) for r in geo.radii],
-            "mids": [round(float(r), 3) for r in geo.mids],
-            "bounds": [[round(float(b), 5) for b in row] for row in geo.bounds],
+    w_, h_ = world.size
+    world_hash = _write_lists(
+        out_dir / "world.json",
+        {
+            "grid": {"x0": world.x0, "y0": world.y0, "w": w_, "h": h_},
+            "spawn": [0, 0],
+            "ground": {k: {"name": n, "color": c} for k, (n, c) in GROUND.items()},
+            "themes": [
+                {
+                    "key": t["key"],
+                    "zh": t["zh"],
+                    "en": t["en"],
+                    "biome": t["biome"],
+                    "color": t["color"],
+                    "place": t["place"],
+                    "count": int(np.sum(theme == j)),
+                }
+                for j, t in enumerate(themes_cfg)
+            ],
+            "regionFields": REGION_FIELDS,
         },
-    }
-    regions_text = json.dumps(regions, ensure_ascii=False, indent=1) + "\n"
-    (out_dir / "regions.json").write_text(regions_text, encoding="utf-8")
-    regions_hash = hashlib.sha256(regions_text.encode()).hexdigest()
+        {
+            "regions": [[r[f] for f in REGION_FIELDS] for r in world.regions],
+            "terrain": ["".join(row) for row in world.ground.tolist()],
+            "regionRuns": region_runs(world.region_grid),
+        },
+    )
 
     srows = [[s["id"], s["en_id"], s["en"], s["seg"]] for s in sentences]
-    sentences_hash = _write_rows(
+    sentences_hash = _write_lists(
         out_dir / "sentences.json",
         {"fields": ["id", "en_id", "en", "seg"]},
-        srows,
-        {"byWord": by_word},
+        {"rows": srows, "byWord": by_word},
+    )
+
+    legacy_hash = _write_lists(
+        out_dir / "legacy-ids.json",
+        {
+            "from": "pack schema 1 (2021 HSK 3.0 list, ids L<band>-<seq>)",
+            "to": "w<number> ids; 0 = no match",
+        },
+        {"bands": [[k, v] for k, v in legacy_bands(legacy).items()]},
     )
 
     lock = load_lock()
     content_hash = hashlib.sha256(
-        (words_hash + regions_hash + sentences_hash).encode()
+        (words_hash + world_hash + sentences_hash + legacy_hash).encode()
     ).hexdigest()[:16]
+    levels = np.array([w.level for w in words])
+    reg_levels = Counter(r["level"] for r in world.regions)
     manifest = {
         "schema": SCHEMA_VERSION,
         "pack": "zh-en",
-        "title": "Mandarin Chinese → English (HSK 3.0)",
+        "title": "Mandarin Chinese → English (HSK 3.0, 2025 syllabus)",
         "target": {"lang": "zh-Hans", "name": "中文", "tts": "zh-CN"},
         "source": {"lang": "en", "name": "English"},
         "layoutVersion": LAYOUT_VERSION,
         "contentHash": content_hash,
-        "files": {"words": "words.json", "regions": "regions.json", "sentences": "sentences.json"},
+        "files": {
+            "words": "words.json",
+            "world": "world.json",
+            "sentences": "sentences.json",
+            "legacy": "legacy-ids.json",
+        },
         "levels": [
             {
                 "level": lvl,
                 "label": LEVEL_LABELS[lvl],
-                "inner": round(float(geo.radii[lvl - 1]), 3),
-                "outer": round(float(geo.radii[lvl]), 3),
-                "count": sum(1 for w in words if w.level == lvl),
+                "count": int(np.sum(levels == lvl)),
+                "regions": reg_levels[lvl],
             }
             for lvl in range(1, 8)
         ],
-        "worldRadius": round(float(geo.radii[-1]), 3),
-        "coreRadius": round(float(geo.radii[0]), 3),
-        "starters": pick_starters(words, theme, k),
-        "counts": {"words": len(words), "sentences": len(sentences)},
+        "starters": pick_starters(words, world),
+        "counts": {
+            "words": len(words),
+            "sentences": len(sentences),
+            "regions": len(world.regions),
+        },
         "sources": [
             {
                 "key": key,
@@ -201,8 +204,9 @@ def export_pack(
             }
             for key, v in lock.items()
         ],
-        "stats": stats,
+        "stats": {**stats, "world": {**world.stats, **world_stats(world, words)}},
     }
+    del manifest["stats"]["world"]["region_sizes"]
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
     )
@@ -213,39 +217,53 @@ def write_report(
     path: Path,
     words: list[Word],
     theme: np.ndarray,
-    anchor: np.ndarray,
+    world: World,
     themes_cfg: list[dict],
     manifest: dict,
 ) -> None:
+    levels = np.array([w.level for w in words])
     lines = [
         "# zh-en pack report",
         "",
         "Generated by `uv run langmap build`. Review this diff when the pipeline changes.",
         "",
         f"- Content hash: `{manifest['contentHash']}`",
-        f"- Words: {len(words)}; sentences: {manifest['counts']['sentences']}",
-        f"- World radius: {manifest['worldRadius']}",
+        (
+            f"- Words: {len(words)}; sentences: {manifest['counts']['sentences']}; "
+            f"regions: {manifest['counts']['regions']}"
+        ),
+        (
+            f"- Grid: {world.size[0]}×{world.size[1]} cells; "
+            f"land: {manifest['stats']['world']['land_cells']} cells"
+        ),
+        "- Words per land cell by distance from the center (must never increase outward): "
+        + ", ".join(str(d) for d in manifest["stats"]["world"]["density_by_distance"]),
         "",
-        "## Regions",
+        "## Themes",
         "",
-        "| Region | " + " | ".join(LEVEL_LABELS[lvl] for lvl in range(1, 8)) + " | Total |",
-        "|---|" + "---|" * 8,
+        "| Theme | Town | " + " | ".join(LEVEL_LABELS[lvl] for lvl in range(1, 8)) + " | Total |",
+        "|---|---|" + "---|" * 8,
     ]
     for j, t in enumerate(themes_cfg):
-        counts = [
-            int(np.sum((theme == j) & (np.array([w.level for w in words]) == lvl)))
-            for lvl in range(1, 8)
-        ]
+        counts = [int(np.sum((theme == j) & (levels == lvl))) for lvl in range(1, 8)]
         lines.append(
-            f"| {t['zh']} {t['en']} | " + " | ".join(map(str, counts)) + f" | {sum(counts)} |"
+            f"| {t['zh']} {t['en']} | {t['place']['zh']} {t['place']['en']} | "
+            + " | ".join(map(str, counts))
+            + f" | {sum(counts)} |"
         )
-    lines += ["", "## Sentence coverage", "", "| Level | Words with sentences |", "|---|---|"]
+    lines += ["", "## Regions", ""]
+    for lvl in range(1, 8):
+        regs = [r for r in world.regions if r["level"] == lvl]
+        sizes = sorted({r["count"] for r in regs})
+        lines.append(
+            f"**{LEVEL_LABELS[lvl]}** ({len(regs)} regions of {'–'.join(map(str, sizes))} "
+            "words): " + ", ".join(f"{r['zh']} {r['en']}" for r in regs)
+        )
+        lines.append("")
+    lines += ["## Sentence coverage", "", "| Level | Words with sentences |", "|---|---|"]
     for lvl, (have, total) in manifest["stats"]["sentences"]["coverage_by_level"].items():
         lines.append(f"| {LEVEL_LABELS[int(lvl)]} | {have}/{total} ({100 * have / total:.0f}%) |")
-    kids = Counter(int(a) for a in anchor if a >= 0)
-    hubs = ", ".join(f"{words[i].hanzi} ({c})" for i, c in kids.most_common(20))
-    lines += ["", "## Biggest hubs (children anchored to the word)", "", hubs, ""]
-    lines += ["## Starters", "", ", ".join(words[i].hanzi for i in manifest["starters"]), ""]
+    lines += ["", "## Starters", "", ", ".join(words[i].hanzi for i in manifest["starters"]), ""]
     lines += ["## Stats", "", "```json", json.dumps(manifest["stats"], indent=1), "```", ""]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")

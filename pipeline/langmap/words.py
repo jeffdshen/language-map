@@ -1,17 +1,23 @@
-"""Load and normalize the HSK 3.0 word list into language-agnostic Word records."""
+"""Load and normalize the HSK 3.0 word list into language-agnostic Word records.
+
+The word list, levels, order and parts of speech come from the official 2025 HSK
+exam syllabus (via the HearMandarin dataset). English glosses are the dataset's
+short teaching gloss followed by CC-CEDICT senses. The older 2021 list
+(ivankra/hsk30) is only used to map ids from old saves and for alternate forms.
+"""
 
 from __future__ import annotations
 
 import csv
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
-from .paths import CONFIG_DIR
 from .pinyin import normalize_numeric
 from .sources import fetch
 
-LEVELS = {"1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7-9": 7}
+LEGACY_LEVELS = {"1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7-9": 7}
 LEVEL_LABELS = {
     1: "HSK 1",
     2: "HSK 2",
@@ -22,7 +28,26 @@ LEVEL_LABELS = {
     7: "HSK 7–9",
 }
 
-# hsk30 POS code -> generic category used by the app for shapes/appearance.
+# Official syllabus POS (Chinese) -> internal POS code (also used by themes.json pos_rules).
+POS_ZH = {
+    "名": "N",
+    "动": "V",
+    "形": "Adj",
+    "副": "Adv",
+    "代": "Pron",
+    "数": "Num",
+    "量": "M",
+    "数量": "M",
+    "介": "Prep",
+    "连": "Conj",
+    "助": "Aux",
+    "叹": "Intj",
+    "拟声": "Phonetic",
+    "前缀": "Prefix",
+    "后缀": "Suffix",
+}
+
+# POS code -> generic category used by the app for landmarks/appearance.
 POS_CATEGORY = {
     "N": "noun",
     "V": "verb",
@@ -94,77 +119,145 @@ def clean_glosses(meanings: list[str], limit: int = 8) -> list[str]:
     return out[:limit]
 
 
-def _parse_cedict_key(key: str) -> tuple[str, str, str] | None:
-    m = re.fullmatch(r"(.+?)\|(.+?)\[(.+)\]", key.strip())
-    if not m:
-        return None
-    return m.group(1), m.group(2), m.group(3)
+def parse_pos_zh(pos_zh: str) -> list[str]:
+    """'动、（名、量）' -> ['V', 'N', 'M']: primary uses first, parenthesized (minor) uses after."""
+    primary: list[str] = []
+    minor: list[str] = []
+    in_paren = False
+    for tok in pos_zh.split("、"):
+        tok = tok.strip()
+        opens, closes = tok.startswith("（"), tok.endswith("）")
+        tok = tok.strip("（）() ")
+        code = POS_ZH.get(tok)
+        if code:
+            dest = minor if (in_paren or opens) else primary
+            if code not in primary and code not in minor:
+                dest.append(code)
+        if opens and not closes:
+            in_paren = True
+        if closes:
+            in_paren = False
+    return primary + minor
 
 
-def _forms_for_key(dk: dict, key: str) -> list[dict]:
-    parsed = _parse_cedict_key(key)
-    if not parsed:
-        return []
-    trad, simp, num = parsed
+def _py_key(num: str, tones: bool = True) -> str:
+    k = re.sub(r"[\s\-·']", "", normalize_numeric(num))
+    return k if tones else re.sub(r"[1-5]", "", k)
+
+
+def cedict_meanings(dk: dict, simp: str, pinyin_num: str) -> list[str]:
+    """CC-CEDICT senses for (simplified, reading): exact tones, else toneless, else sole reading."""
     entry = dk.get(simp)
     if not entry:
         return []
     forms = entry["f"]
-    exact = [f for f in forms if f["t"] == trad and f["i"]["n"] == num]
-    if exact:
-        return exact
-    loose = [f for f in forms if normalize_numeric(f["i"]["n"]) == normalize_numeric(num)]
-    if loose:
-        return [f for f in loose if f["t"] == trad] or loose
-    return []
+    match = [f for f in forms if _py_key(f["i"]["n"]) == _py_key(pinyin_num)]
+    if not match:
+        bare = _py_key(pinyin_num, tones=False)
+        match = [f for f in forms if _py_key(f["i"]["n"], tones=False) == bare]
+    if not match and len({_py_key(f["i"]["n"], tones=False) for f in forms}) == 1:
+        match = forms
+    return [m for f in match for m in f["m"]]
 
 
-def load_words() -> list[Word]:
-    rows = list(csv.DictReader(fetch("hsk30").open(encoding="utf-8")))
-    dk = {w["s"]: w for w in json.loads(fetch("complete-hsk").read_text(encoding="utf-8"))}
-    overrides = json.loads((CONFIG_DIR / "zh-en" / "gloss_overrides.json").read_text("utf-8"))
+def split_gloss(gloss: str) -> list[str]:
+    return [g.strip() for g in gloss.split(";") if g.strip()]
 
-    words: list[Word] = []
-    for r in rows:
+
+def dedupe_senses(glosses: list[str], limit: int = 8) -> list[str]:
+    """Drop ';'-separated parts already given by an earlier sense ('eight', 'eight; 8' -> '8')."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for g in glosses:
+        parts = [p for p in split_gloss(g) if p.lower() not in seen]
+        seen.update(p.lower() for p in parts)
+        if parts:
+            out.append("; ".join(parts))
+    return out[:limit]
+
+
+def _legacy_rows() -> list[dict]:
+    """The 2021 list (ivankra/hsk30) as {id, hanzi, pinyin, level, alts} rows."""
+    out = []
+    for r in csv.DictReader(fetch("hsk30").open(encoding="utf-8")):
         variants = json.loads(r["Variants"]) if r["Variants"] else []
         proper = [v for v in variants if not v.get("Example")]
+        alts: list[str] = []
         if proper:
-            main = proper[0]
-            hanzi, pinyin = main["Simplified"], main["Pinyin"]
-            trad = main.get("Traditional", r["Traditional"]).split("|")[0]
-            alts = []
+            hanzi, pinyin = proper[0]["Simplified"], proper[0]["Pinyin"]
             for v in proper[1:]:
                 for a in (v["Simplified"], v["Pinyin"]):
                     if a not in alts and a not in (hanzi, pinyin):
                         alts.append(a)
         else:
             hanzi, pinyin = r["Simplified"], r["Pinyin"]
-            trad = r["Traditional"].split("|")[0]
-            alts = []
-        pos = [p for p in r["POS"].split("/") if p] or []
+        out.append(
+            {
+                "id": r["ID"],
+                "hanzi": hanzi,
+                "pinyin": pinyin,
+                "level": LEGACY_LEVELS[r["Level"]],
+                "alts": alts,
+            }
+        )
+    return out
 
-        meanings: list[str] = []
-        if r["ID"] in overrides:
-            meanings = overrides[r["ID"]]
-        else:
-            for key in [k for k in r["CEDICT"].split("/") if k]:
-                for f in _forms_for_key(dk, key):
-                    meanings.extend(f["m"])
-            if not meanings and hanzi in dk:
-                for f in dk[hanzi]["f"]:
-                    meanings.extend(f["m"])
-        glosses = clean_glosses(meanings)
 
+def _match_key(hanzi: str, pinyin: str) -> tuple[str, str]:
+    return hanzi, re.sub(r"[\s\-·']", "", pinyin.lower())
+
+
+def legacy_id_map(words: list[Word]) -> dict[str, str]:
+    """Old (2021 list) word id -> new id, for migrating saves. Unmatched ids are omitted.
+
+    Matches on (hanzi, pinyin), then hanzi alone; among several candidates (the
+    syllabus repeats some words at different levels) the closest level wins.
+    """
+    by_key: dict[tuple[str, str], list[Word]] = {}
+    by_hanzi: dict[str, list[Word]] = {}
+    for w in words:
+        by_key.setdefault(_match_key(w.hanzi, w.pinyin), []).append(w)
+        by_hanzi.setdefault(w.hanzi, []).append(w)
+    out: dict[str, str] = {}
+    for r in _legacy_rows():
+        cands = by_key.get(_match_key(r["hanzi"], r["pinyin"])) or by_hanzi.get(r["hanzi"])
+        if cands:
+            best = min(cands, key=lambda w: (abs(w.level - r["level"]), w.index))
+            out[r["id"]] = best.id
+    return out
+
+
+def load_words() -> list[Word]:
+    rows = [
+        r
+        for r in csv.DictReader(fetch("hsk2025").open(encoding="utf-8"))
+        if r["hsk3_band"] and r["hsk3_seq"]
+    ]
+    rows.sort(key=lambda r: int(r["hsk3_seq"]))
+    dk = {w["s"]: w for w in json.loads(fetch("complete-hsk").read_text(encoding="utf-8"))}
+    legacy_alts: dict[tuple[str, str], list[str]] = {}
+    for r in _legacy_rows():
+        legacy_alts.setdefault(_match_key(r["hanzi"], r["pinyin"]), []).extend(r["alts"])
+    repeated = Counter(_match_key(r["simplified"], r["pinyin"]) for r in rows)
+
+    words: list[Word] = []
+    for r in rows:
+        hanzi, pinyin = r["simplified"].strip(), r["pinyin"].strip()
+        key = _match_key(hanzi, pinyin)
+        glosses = [r["gloss_en"].strip()]
+        # Words the syllabus lists twice (different senses) keep only their own teaching gloss.
+        if repeated[key] == 1:
+            glosses += clean_glosses(cedict_meanings(dk, hanzi, r["pinyin_num"]))
         words.append(
             Word(
-                id=r["ID"],
+                id=r["id"],
                 hanzi=hanzi,
                 pinyin=pinyin,
-                level=LEVELS[r["Level"]],
-                pos=pos,
-                trad=trad,
-                glosses=glosses,
-                alts=alts,
+                level=int(r["hsk3_band"]),
+                pos=parse_pos_zh(r["pos_zh"]),
+                trad=r["traditional"].strip() or hanzi,
+                glosses=dedupe_senses(glosses),
+                alts=[a for a in legacy_alts.get(key, []) if a not in (hanzi, pinyin)],
             )
         )
 
@@ -181,9 +274,13 @@ def _add_frequencies(words: list[Word]) -> None:
         w.freq = round(float(zipf_frequency(w.hanzi, "zh")), 2)
 
 
-def load_char_levels() -> dict[str, int]:
-    rows = csv.DictReader(fetch("hsk30-chars").open(encoding="utf-8"))
-    return {r["Hanzi"]: LEVELS.get(r["Level"], 7) for r in rows}
+def char_levels(words: list[Word]) -> dict[str, int]:
+    """Level at which each character first appears in the word list."""
+    out: dict[str, int] = {}
+    for w in words:
+        for ch in w.chars:
+            out[ch] = min(out.get(ch, 99), w.level)
+    return out
 
 
 def pos_category(w: Word) -> str:
