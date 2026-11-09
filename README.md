@@ -8,6 +8,8 @@ a time.
 First pack: **Mandarin Chinese → English, HSK 3.0** — all 11,092 words, levels 1–9. The data
 model and app are language-agnostic.
 
+**Live:** <https://jeffdshen.github.io/language-map/>
+
 ![Map overview: learned HSK 1 words in the center, "?" frontier spots around them](docs/img/map-overview.webp)
 
 ## How it works
@@ -63,6 +65,10 @@ npm run dev        # http://localhost:5173
 
 Other scripts: `npm run build` (static site in `app/dist/`, works from any sub-path),
 `npm run preview`, `npm test`, `npm run lint`, `npm run typecheck`.
+
+Every push to `main` deploys the build to GitHub Pages via
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) (repo **Settings → Pages → Source**
+must be set to **GitHub Actions**).
 
 ## Repository layout
 
