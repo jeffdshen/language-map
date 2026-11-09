@@ -1,0 +1,23 @@
+# Data sources and licenses
+
+This file covers third-party data. (The repository does not yet declare a
+license for its own code.) The generated language pack in `data/zh-en/` is derived from the
+third-party sources below and is distributed under their terms. Because it
+contains CC-CEDICT glosses and ConceptNet-derived placement, **the data pack as a
+whole is licensed CC BY-SA 4.0**; example sentences remain under CC BY 2.0 FR.
+
+| Source | Used for | License |
+|---|---|---|
+| [ivankra/hsk30](https://github.com/ivankra/hsk30) — HSK 3.0 word & character lists | word list, levels, POS, pinyin, CC-CEDICT keys | MIT |
+| [CC-CEDICT](https://cc-cedict.org/) via [drkameleon/complete-hsk-vocabulary](https://github.com/drkameleon/complete-hsk-vocabulary) | English glosses, traditional forms | CC BY-SA 4.0 (CC-CEDICT); MIT (packaging) |
+| [Tatoeba](https://tatoeba.org/) via the npm package `tatoeba-sentence-pairs-in-mandarin-chinese-english` | example sentences (Chinese ↔ English) | CC BY 2.0 FR |
+| [ConceptNet Numberbatch 17.06](https://github.com/commonsense/conceptnet-numberbatch) | semantic embeddings for regions, neighbors and layout (vectors are not redistributed) | CC BY-SA 4.0 |
+| [wordfreq](https://github.com/rspeer/wordfreq) | word frequency (ordering within regions) | Apache-2.0 code; data CC BY-SA 4.0 |
+| [jieba](https://github.com/fxsjy/jieba), [pypinyin](https://github.com/mozillazg/python-pinyin), [OpenCC](https://github.com/BYVoid/OpenCC) | segmentation, reading disambiguation, script filtering | MIT / MIT / Apache-2.0 |
+
+Tatoeba sentences keep their original ids (`id`, `en_id` in `sentences.json`);
+each sentence can be viewed at `https://tatoeba.org/sentences/show/<id>`, which
+credits its contributor.
+
+Exact versions and checksums of every input are pinned in
+[`pipeline/sources.lock.json`](pipeline/sources.lock.json).

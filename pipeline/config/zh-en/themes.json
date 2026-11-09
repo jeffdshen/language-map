@@ -1,0 +1,107 @@
+{
+  "_comment": "Curated regions of the map, in clockwise order starting at the top. Neighbors in this list are neighbors on the map, so order related themes together. 'en'/'zh' keywords seed the zero-shot classifier (ConceptNet Numberbatch vectors).",
+  "themes": [
+    {
+      "key": "grammar", "zh": "语法", "en": "Grammar & Function Words", "biome": "plaza", "color": "#cfc6b4",
+      "en_keywords": ["and", "but", "because", "if", "also", "very", "not", "only", "then", "already", "still", "of", "with", "from", "although", "therefore", "even", "however"],
+      "zh_keywords": ["和", "但是", "因为", "如果", "也", "很", "不", "就", "已经", "还", "的", "从", "虽然", "所以", "甚至"]
+    },
+    {
+      "key": "people", "zh": "人们", "en": "People & Family", "biome": "village", "color": "#e9b98a",
+      "en_keywords": ["person", "family", "mother", "father", "friend", "child", "man", "woman", "relative", "neighbor", "guest", "marriage", "husband", "wife", "baby", "people"],
+      "zh_keywords": ["人", "家人", "妈妈", "爸爸", "朋友", "孩子", "男人", "女人", "亲戚", "邻居", "客人", "结婚", "丈夫", "妻子"]
+    },
+    {
+      "key": "feelings", "zh": "情感", "en": "Feelings & Character", "biome": "meadow", "color": "#f2a7b8",
+      "en_keywords": ["happy", "sad", "angry", "afraid", "love", "hate", "worry", "proud", "shy", "brave", "kind", "personality", "emotion", "mood", "hope", "lonely"],
+      "zh_keywords": ["高兴", "难过", "生气", "害怕", "爱", "担心", "骄傲", "勇敢", "善良", "性格", "感情", "心情", "希望", "孤独"]
+    },
+    {
+      "key": "communication", "zh": "交流", "en": "Language & Communication", "biome": "harbor", "color": "#9fc9e8",
+      "en_keywords": ["say", "speak", "talk", "ask", "answer", "tell", "letter", "word", "language", "story", "news", "explain", "discuss", "meaning", "message", "reply"],
+      "zh_keywords": ["说", "讲", "谈", "问", "回答", "告诉", "信", "词", "语言", "故事", "新闻", "解释", "讨论", "意思"]
+    },
+    {
+      "key": "mind", "zh": "学习", "en": "Thinking & Learning", "biome": "scholar", "color": "#b9b2e6",
+      "en_keywords": ["think", "know", "understand", "learn", "study", "school", "teacher", "knowledge", "idea", "reason", "remember", "believe", "decide", "exam", "theory", "logic"],
+      "zh_keywords": ["想", "知道", "明白", "学习", "学校", "老师", "知识", "主意", "理由", "记得", "相信", "决定", "考试", "理论"]
+    },
+    {
+      "key": "society", "zh": "社会", "en": "Society & Law", "biome": "citadel", "color": "#c7a2a2",
+      "en_keywords": ["society", "government", "country", "law", "politics", "police", "army", "war", "rights", "public", "citizen", "policy", "crime", "history", "religion", "nation"],
+      "zh_keywords": ["社会", "政府", "国家", "法律", "政治", "警察", "军队", "战争", "权利", "公民", "政策", "犯罪", "历史", "宗教"]
+    },
+    {
+      "key": "work", "zh": "工作", "en": "Work & Economy", "biome": "market", "color": "#e6cf7a",
+      "en_keywords": ["work", "job", "company", "business", "money", "buy", "sell", "price", "market", "office", "boss", "salary", "trade", "bank", "manage", "economy"],
+      "zh_keywords": ["工作", "公司", "生意", "钱", "买", "卖", "价格", "市场", "办公室", "老板", "工资", "贸易", "银行", "管理", "经济"]
+    },
+    {
+      "key": "tech", "zh": "科技", "en": "Science & Technology", "biome": "foundry", "color": "#9fb7c4",
+      "en_keywords": ["science", "technology", "computer", "machine", "energy", "electricity", "chemistry", "physics", "internet", "phone", "industry", "material", "experiment", "engineering", "data", "metal"],
+      "zh_keywords": ["科学", "技术", "电脑", "机器", "能源", "电", "化学", "物理", "网络", "手机", "工业", "材料", "实验", "工程", "数据"]
+    },
+    {
+      "key": "nature", "zh": "自然", "en": "Nature & Animals", "biome": "forest", "color": "#86c48a",
+      "en_keywords": ["nature", "animal", "plant", "tree", "flower", "mountain", "river", "sea", "weather", "rain", "wind", "sun", "earth", "environment", "bird", "stone"],
+      "zh_keywords": ["自然", "动物", "植物", "树", "花", "山", "河", "海", "天气", "雨", "风", "太阳", "地球", "环境", "鸟"]
+    },
+    {
+      "key": "places", "zh": "地方", "en": "Places & Travel", "biome": "plains", "color": "#c9d98e",
+      "en_keywords": ["place", "city", "travel", "road", "car", "train", "airport", "hotel", "direction", "street", "map", "trip", "station", "north", "bridge", "village"],
+      "zh_keywords": ["地方", "城市", "旅行", "路", "车", "火车", "机场", "酒店", "方向", "街", "地图", "车站", "北", "桥", "村"]
+    },
+    {
+      "key": "home", "zh": "家居", "en": "Home & Daily Life", "biome": "homestead", "color": "#d9b99b",
+      "en_keywords": ["home", "house", "room", "furniture", "clothes", "wear", "wash", "sleep", "door", "table", "bed", "shopping", "clean", "daily", "shoes", "window"],
+      "zh_keywords": ["家", "房子", "房间", "家具", "衣服", "穿", "洗", "睡觉", "门", "桌子", "床", "打扫", "鞋", "窗户"]
+    },
+    {
+      "key": "food", "zh": "饮食", "en": "Food & Drink", "biome": "orchard", "color": "#f0c26b",
+      "en_keywords": ["food", "eat", "drink", "rice", "meat", "vegetable", "fruit", "tea", "restaurant", "cook", "taste", "delicious", "breakfast", "hungry", "noodles", "sugar"],
+      "zh_keywords": ["食物", "吃", "喝", "米饭", "肉", "菜", "水果", "茶", "饭馆", "做饭", "味道", "好吃", "早饭", "饿", "面条"]
+    },
+    {
+      "key": "body", "zh": "身体", "en": "Body & Health", "biome": "springs", "color": "#8fd3c7",
+      "en_keywords": ["body", "head", "hand", "eye", "health", "sick", "doctor", "hospital", "medicine", "pain", "heart", "blood", "injury", "tired", "disease", "breathe"],
+      "zh_keywords": ["身体", "头", "手", "眼睛", "健康", "生病", "医生", "医院", "药", "疼", "心脏", "血", "受伤", "累", "病"]
+    },
+    {
+      "key": "leisure", "zh": "文娱", "en": "Arts, Sports & Leisure", "biome": "festival", "color": "#e7a0d4",
+      "en_keywords": ["music", "song", "dance", "art", "movie", "game", "sport", "play", "ball", "painting", "culture", "festival", "holiday", "hobby", "performance", "team"],
+      "zh_keywords": ["音乐", "歌", "跳舞", "艺术", "电影", "游戏", "运动", "玩", "球", "画", "文化", "节日", "假期", "爱好", "表演"]
+    },
+    {
+      "key": "motion", "zh": "动作", "en": "Actions & Motion", "biome": "canyon", "color": "#e39a7c",
+      "en_keywords": ["move", "go", "come", "run", "walk", "take", "put", "hold", "push", "pull", "open", "close", "sit", "stand", "throw", "carry"],
+      "zh_keywords": ["动", "去", "来", "跑", "走", "拿", "放", "推", "拉", "开", "关", "坐", "站", "扔", "带"]
+    },
+    {
+      "key": "qualities", "zh": "性质", "en": "Qualities & Description", "biome": "crystal", "color": "#a9d2f0",
+      "en_keywords": ["big", "small", "good", "bad", "new", "old", "color", "shape", "fast", "slow", "high", "low", "beautiful", "important", "simple", "difficult"],
+      "zh_keywords": ["大", "小", "好", "坏", "新", "旧", "颜色", "形状", "快", "慢", "高", "低", "漂亮", "重要", "简单", "难"]
+    },
+    {
+      "key": "time", "zh": "时间", "en": "Time & Numbers", "biome": "clocktower", "color": "#d4c48e",
+      "en_keywords": ["time", "day", "year", "month", "hour", "minute", "today", "tomorrow", "early", "late", "before", "after", "number", "many", "few", "amount"],
+      "zh_keywords": ["时间", "天", "年", "月", "小时", "分钟", "今天", "明天", "早", "晚", "以前", "以后", "数字", "多", "少"]
+    }
+  ],
+  "pos_rules": {
+    "_comment": "Words whose primary POS is listed are restricted to these themes.",
+    "Aux": ["grammar"],
+    "Prep": ["grammar"],
+    "Conj": ["grammar"],
+    "Prefix": ["grammar"],
+    "Suffix": ["grammar"],
+    "Intj": ["grammar", "feelings"],
+    "Phonetic": ["grammar", "feelings", "nature"],
+    "Num": ["time"],
+    "M": ["time"],
+    "Pron": ["grammar", "people"]
+  },
+  "bias": {
+    "_comment": "Additive cosine bias per (primary POS, theme).",
+    "Adv": {"grammar": 0.12, "time": 0.06}
+  }
+}
