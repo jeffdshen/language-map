@@ -3,6 +3,7 @@ name = "langmap-pipeline"
 version = "0.1.0"
 description = "Offline, deterministic build pipeline for Language Map data packs"
 requires-python = ">=3.12,<3.13"
+license = "MIT"
 dependencies = [
   "numpy",
   "scipy",

@@ -1,13 +1,29 @@
 import { create } from 'zustand'
-import { loadPack, type Pack } from './data/pack'
+import { loadLegacyIds, loadPack, regionAt, type Pack } from './data/pack'
 import { dayKey } from './logic/dates'
-import { autoRevealPicks, computeView, nextHiddenWithChar, revealCandidates, Vis, type MapView } from './logic/explore'
+import {
+  autoRevealPicks,
+  computeView,
+  nearestExplored,
+  nextHiddenWithChar,
+  revealCandidates,
+  Vis,
+  type MapView,
+} from './logic/explore'
 import * as P from './logic/progress'
-import { cleanSettings, newSave, parseSave, type SaveData, type Settings } from './logic/save'
+import {
+  cleanSettings,
+  hasLegacyIds,
+  migrateLegacyIds,
+  newSave,
+  parseSave,
+  type SaveData,
+  type Settings,
+} from './logic/save'
 import { buildSearchIndex, type SearchIndex } from './logic/search'
 import { cancelPendingWrite, disableWrites, enableWrites, flushWrites, onExternalSave, readSave, scheduleWrite } from './persist'
 
-export type Modal = 'settings' | 'about' | 'welcome' | null
+export type Modal = 'settings' | 'about' | 'welcome' | 'map' | 'char' | null
 export type SelectSource = 'map' | 'search' | 'link' | 'url'
 
 export interface Toast {
@@ -17,11 +33,11 @@ export interface Toast {
 }
 
 export interface CameraRequest {
+  /** Target cell. */
   x: number
   y: number
-  /** Minimum zoom (pixels per world unit). */
-  minScale?: number
-  scale?: number
+  /** Reset the zoom to the default game view. */
+  resetZoom?: boolean
   seq: number
 }
 
@@ -47,6 +63,10 @@ interface State {
   questLogOpen: boolean
   toasts: Toast[]
   camera: CameraRequest | null
+  /** Region at the center of the screen (-1 at sea). */
+  here: number
+  /** Character shown in the character-links view. */
+  charFocus: string | null
 }
 
 interface Actions {
@@ -54,8 +74,12 @@ interface Actions {
   tick(): void
   select(i: number | null, from?: SelectSource, fly?: boolean): void
   hover(i: number | null): void
-  flyTo(i: number, minScale?: number): void
+  flyTo(i: number): void
+  flyToCell(x: number, y: number): void
   flyHome(): void
+  /** Called by the map as the camera moves. */
+  setFocus(x: number, y: number): void
+  openChar(ch: string): void
   setModal(m: Modal): void
   setQuestLog(open: boolean): void
   openQuest(i: number, stage?: number): void
@@ -72,7 +96,7 @@ interface Actions {
   bulkKnown(maxLevel: number): number
   updateSettings(patch: Partial<Settings>): void
   dismissWelcome(): void
-  importSave(raw: unknown): void
+  importSave(raw: unknown): Promise<void>
   exportSave(): SaveData
   resetAll(): void
   toast(text: string, kind?: Toast['kind']): void
@@ -83,6 +107,34 @@ export type Store = State & Actions
 
 let toastSeq = 0
 let cameraSeq = 0
+/** Last camera center reported by the map (not reactive; used to discover words "near you"). */
+let focus: [number, number] = [0, 0]
+
+/** [days per stage, counted stages] for the current settings. */
+function rules(settings: Settings): [number, number] {
+  return [settings.daysPerStage, P.activeStages(settings.questMode)]
+}
+
+function view(pack: Pack, progress: P.Progress, settings: Settings, today: string): MapView {
+  const [need, count] = rules(settings)
+  return computeView(pack, progress, need, today, count)
+}
+
+/** Rename word ids from the pre-2025 word list, if the save has any. */
+async function migrateRaw(raw: unknown, pack: Pack): Promise<{ raw: unknown; moved: number; lost: number }> {
+  if (!hasLegacyIds(raw)) return { raw, moved: 0, lost: 0 }
+  const map = await loadLegacyIds(pack)
+  const r = migrateLegacyIds(raw, map)
+  return { raw: r.save, moved: r.moved, lost: r.lost }
+}
+
+function migrationNote(moved: number, lost: number): string | null {
+  if (!moved && !lost) return null
+  return (
+    `The word list was updated to the official 2025 HSK syllabus. Progress on ${moved} word${moved === 1 ? '' : 's'} carried over` +
+    (lost ? `; ${lost} word${lost === 1 ? ' is' : 's are'} no longer on the list.` : '.')
+  )
+}
 
 export const useStore = create<Store>()((set, get) => {
   /** Apply a new progress map: recompute the view and persist. */
@@ -92,8 +144,7 @@ export const useStore = create<Store>()((set, get) => {
     // Strictly increasing stamps, even if the clock steps back, so newer progress always wins across tabs.
     const now = Math.max(Date.now(), Date.parse(save.updatedAt) + 1 || 0)
     const next: SaveData = { ...save, ...extra, progress, updatedAt: new Date(now).toISOString() }
-    const view = computeView(pack, progress, next.settings.daysPerStage, today)
-    set({ save: next, view })
+    set({ save: next, view: view(pack, progress, next.settings, today) })
     scheduleWrite(pack.manifest.pack, next)
   }
 
@@ -120,7 +171,7 @@ export const useStore = create<Store>()((set, get) => {
       if (next.updatedAt <= get().save.updatedAt) return
       cancelPendingWrite()
       const today = dayKey(new Date(), next.settings.rolloverHour)
-      set({ save: next, today, view: computeView(pack, next.progress, next.settings.daysPerStage, today) })
+      set({ save: next, today, view: view(pack, next.progress, next.settings, today) })
     }
     onExternalSave((p, updatedAt) => {
       const { pack, save, saveError } = get()
@@ -138,8 +189,7 @@ export const useStore = create<Store>()((set, get) => {
   function autoReveal(progress: P.Progress, from: number, count: number): { progress: P.Progress; revealed: number[] } {
     const { pack, save, today } = get()
     if (!pack || !save.settings.autoReveal) return { progress, revealed: [] }
-    const view = computeView(pack, progress, save.settings.daysPerStage, today)
-    const picks = autoRevealPicks(pack, view, from, count, save.settings.openCap)
+    const picks = autoRevealPicks(pack, view(pack, progress, save.settings, today), from, count, save.settings.openCap)
     let p = progress
     for (const j of picks) p = P.reveal(p, pack.words[j].id, today)
     return { progress: p, revealed: picks }
@@ -171,6 +221,8 @@ export const useStore = create<Store>()((set, get) => {
     questLogOpen: false,
     toasts: [],
     camera: null,
+    here: -1,
+    charFocus: null,
 
     async init(baseUrl, packName) {
       try {
@@ -178,10 +230,13 @@ export const useStore = create<Store>()((set, get) => {
         const ids = new Set(pack.words.map((w) => w.id))
         let save = newSave(pack.manifest.pack, pack.manifest.layoutVersion)
         let saveError: string | null = null
+        let note: string | null = null
         const read = await readSave(pack.manifest.pack)
         if (read.status === 'ok') {
           try {
-            save = parseSave(read.data, pack.manifest.pack, ids)
+            const m = await migrateRaw(read.data, pack)
+            note = migrationNote(m.moved, m.lost)
+            save = parseSave(m.raw, pack.manifest.pack, ids)
           } catch (err) {
             saveError = `Your saved progress couldn't be loaded (${err instanceof Error ? err.message : String(err)}).`
           }
@@ -197,20 +252,26 @@ export const useStore = create<Store>()((set, get) => {
           for (const i of pack.manifest.starters) save.progress = P.reveal(save.progress, pack.words[i].id, today)
         }
         const layoutChanged = read.status === 'ok' && !saveError && save.layoutVersion !== pack.manifest.layoutVersion
+        // "Dim" became the default with the grid map (v2); saves from the old map still had "hidden" by default.
+        if (layoutChanged && save.layoutVersion < 2 && save.settings.fogMode === 'hidden') {
+          save = { ...save, settings: { ...save.settings, fogMode: 'dim' } }
+        }
         save = { ...save, layoutVersion: pack.manifest.layoutVersion }
-        const view = computeView(pack, save.progress, save.settings.daysPerStage, today)
+        focus = [...pack.world.spawn]
         set({
           pack,
           save,
-          view,
+          view: view(pack, save.progress, save.settings, today),
           today,
+          here: regionAt(pack.world, focus[0], focus[1]),
           searchIndex: buildSearchIndex(pack.words),
           saveError,
           modal: save.welcomed || saveError ? null : 'welcome',
         })
         scheduleWrite(pack.manifest.pack, save)
         installSync(ids)
-        if (layoutChanged) get().toast('The map layout was updated. Your progress is kept.', 'info')
+        if (note) get().toast(note, 'info')
+        else if (layoutChanged) get().toast('The map was redrawn. Your progress is kept.', 'info')
       } catch (err) {
         set({ loadError: err instanceof Error ? err.message : String(err) })
       }
@@ -220,7 +281,7 @@ export const useStore = create<Store>()((set, get) => {
       const { pack, save, today } = get()
       const now = dayKey(new Date(), save.settings.rolloverHour)
       if (pack && now !== today) {
-        set({ today: now, view: computeView(pack, save.progress, save.settings.daysPerStage, now) })
+        set({ today: now, view: view(pack, save.progress, save.settings, now) })
       }
     },
 
@@ -235,13 +296,30 @@ export const useStore = create<Store>()((set, get) => {
       if (get().hovered !== i) set({ hovered: i })
     },
 
-    flyTo(i, minScale = 26) {
+    flyTo(i) {
       const w = word(i)
-      set({ camera: { x: w.x, y: w.y, minScale, seq: ++cameraSeq } })
+      set({ camera: { x: w.x, y: w.y, seq: ++cameraSeq } })
+    },
+
+    flyToCell(x, y) {
+      set({ camera: { x, y, seq: ++cameraSeq } })
     },
 
     flyHome() {
-      set({ camera: { x: 0, y: 0, scale: 0, seq: ++cameraSeq } })
+      const [x, y] = get().pack?.world.spawn ?? [0, 0]
+      set({ camera: { x, y, resetZoom: true, seq: ++cameraSeq } })
+    },
+
+    setFocus(x, y) {
+      focus = [x, y]
+      const { pack, here } = get()
+      if (!pack) return
+      const r = regionAt(pack.world, x, y)
+      if (r >= 0 && r !== here) set({ here: r })
+    },
+
+    openChar(ch) {
+      set({ charFocus: ch, modal: 'char' })
     },
 
     setModal(modal) {
@@ -255,8 +333,9 @@ export const useStore = create<Store>()((set, get) => {
     openQuest(i, stage) {
       const { save } = get()
       const wp = save.progress[word(i).id]
-      const cur = P.currentStage(wp, save.settings.daysPerStage)
-      set({ quest: { word: i, stage: stage ?? (cur < 0 ? P.STAGE_COUNT - 1 : cur) } })
+      const [need, count] = rules(save.settings)
+      const cur = P.currentStage(wp, need, count)
+      set({ quest: { word: i, stage: stage ?? (cur < 0 ? count - 1 : cur) } })
     },
 
     closeQuest() {
@@ -284,8 +363,9 @@ export const useStore = create<Store>()((set, get) => {
     discover() {
       const { pack, view } = get()
       if (!pack || !view) return
-      const from = get().selected
-      let picks = from !== null && view.vis[from] >= Vis.Revealed ? revealCandidates(pack, view, from, 1) : []
+      let from = get().selected
+      if (from === null || view.vis[from] < Vis.Revealed) from = nearestExplored(pack, view, focus[0], focus[1], 14)
+      let picks = from !== null ? revealCandidates(pack, view, from, 1) : []
       if (!picks.length) picks = revealCandidates(pack, view, null, 1)
       if (!picks.length) {
         get().toast('Nothing left to discover nearby. Search for a word to place it on your map.')
@@ -306,16 +386,16 @@ export const useStore = create<Store>()((set, get) => {
 
     practiceSuccess(i, stage) {
       const { save, today } = get()
-      const need = save.settings.daysPerStage
+      const [need, count] = rules(save.settings)
       const id = word(i).id
       const before = save.progress[id]
       const doneBefore = P.stageDone(before?.stages[stage], need)
-      const learnedBefore = P.isLearned(before, need)
+      const learnedBefore = P.isLearned(before, need, count)
       const r = P.recordSuccess(save.progress, id, stage, today, need)
       let progress = r.progress
       const after = progress[id]
       const stageFinished = !doneBefore && P.stageDone(after.stages[stage], need)
-      const learned = !learnedBefore && P.isLearned(after, need)
+      const learned = !learnedBefore && P.isLearned(after, need, count)
       let revealed: number[] = []
       if (stageFinished || learned) {
         const res = autoReveal(progress, i, learned ? 2 : 1)
@@ -328,11 +408,11 @@ export const useStore = create<Store>()((set, get) => {
 
     markStage(i, stage, marked) {
       const { save, today } = get()
-      const need = save.settings.daysPerStage
+      const [need, count] = rules(save.settings)
       const id = word(i).id
-      const learnedBefore = P.isLearned(save.progress[id], need)
+      const learnedBefore = P.isLearned(save.progress[id], need, count)
       let progress = P.setStageMarked(save.progress, id, stage, marked, today)
-      if (!learnedBefore && P.isLearned(progress[id], need)) {
+      if (!learnedBefore && P.isLearned(progress[id], need, count)) {
         progress = autoReveal(progress, i, 2).progress
       }
       commit(progress)
@@ -341,7 +421,7 @@ export const useStore = create<Store>()((set, get) => {
     markKnown(i) {
       const { save, today } = get()
       const id = word(i).id
-      const wasLearned = P.isLearned(save.progress[id], save.settings.daysPerStage)
+      const wasLearned = P.isLearned(save.progress[id], ...rules(save.settings))
       let progress = P.markKnown(save.progress, id, today)
       let revealed: number[] = []
       if (!wasLearned) ({ progress, revealed } = autoReveal(progress, i, 2))
@@ -361,14 +441,14 @@ export const useStore = create<Store>()((set, get) => {
       let progress = save.progress
       let n = 0
       for (const w of pack.words) {
-        if (w.level > maxLevel || P.isLearned(progress[w.id], save.settings.daysPerStage)) continue
+        if (w.level > maxLevel || P.isLearned(progress[w.id], ...rules(save.settings))) continue
         progress = P.markKnown(progress, w.id, today)
         n++
       }
       // Open a few fresh threads just beyond what is known.
-      const view = computeView(pack, progress, save.settings.daysPerStage, today)
-      const room = Math.max(0, Math.min(10, save.settings.openCap - view.openCount))
-      for (const j of revealCandidates(pack, view, null, room)) progress = P.reveal(progress, pack.words[j].id, today)
+      const v = view(pack, progress, save.settings, today)
+      const room = Math.max(0, Math.min(10, save.settings.openCap - v.openCount))
+      for (const j of revealCandidates(pack, v, null, room)) progress = P.reveal(progress, pack.words[j].id, today)
       commit(progress)
       return n
     },
@@ -390,11 +470,14 @@ export const useStore = create<Store>()((set, get) => {
       set({ modal: null })
     },
 
-    importSave(raw) {
+    async importSave(raw) {
       const { pack } = get()
       if (!pack) return
       const ids = new Set(pack.words.map((w) => w.id))
-      const save = parseSave(raw, pack.manifest.pack, ids)
+      const m = await migrateRaw(raw, pack)
+      const save = parseSave(m.raw, pack.manifest.pack, ids)
+      const note = migrationNote(m.moved, m.lost)
+      if (note) get().toast(note, 'info')
       enableWrites()
       set({ save, saveError: null })
       commit(save.progress, { welcomed: true, layoutVersion: pack.manifest.layoutVersion })

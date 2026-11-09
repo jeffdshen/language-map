@@ -1,4 +1,4 @@
-import { STAGE_COUNT, type Progress, type WordProgress } from './progress'
+import { STAGE_COUNT, type Progress, type QuestMode, type WordProgress } from './progress'
 
 export type FogMode = 'off' | 'dim' | 'hidden'
 export type FogScope = 'words' | 'terrain'
@@ -6,6 +6,8 @@ export type FogScope = 'words' | 'terrain'
 export interface Settings {
   /** off: all words bright · dim: unexplored words faded · hidden: unexplored words invisible ("?" at the frontier). */
   fogMode: FogMode
+  /** Which quest stages count: listening only, or listening and reading characters. */
+  questMode: QuestMode
   /** Whether fog also covers terrain far from explored words. */
   fogScope: FogScope
   /** Successful days needed to finish a stage. */
@@ -23,7 +25,8 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  fogMode: 'hidden',
+  fogMode: 'dim',
+  questMode: 'full',
   fogScope: 'words',
   daysPerStage: 3,
   openCap: 25,
@@ -89,6 +92,7 @@ export function cleanSettings(raw: unknown): Settings {
   const d = DEFAULT_SETTINGS
   return {
     fogMode: r.fogMode === 'off' || r.fogMode === 'dim' || r.fogMode === 'hidden' ? r.fogMode : d.fogMode,
+    questMode: r.questMode === 'listening' || r.questMode === 'full' ? r.questMode : d.questMode,
     fogScope: r.fogScope === 'terrain' || r.fogScope === 'words' ? r.fogScope : d.fogScope,
     daysPerStage: Math.round(clamp(r.daysPerStage, 1, 10, d.daysPerStage)),
     openCap: Math.round(clamp(r.openCap, 3, 500, d.openCap)),
@@ -123,4 +127,65 @@ export function parseSave(raw: unknown, pack: string, knownIds?: Set<string>): S
     progress,
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : new Date(0).toISOString(),
   }
+}
+
+const LEGACY_ID = /^L\d-\d{4}$/
+
+/** True when a raw save still uses word ids from the old (pre-2025) word list. */
+export function hasLegacyIds(raw: unknown): boolean {
+  const progress = raw && typeof raw === 'object' ? (raw as { progress?: unknown }).progress : undefined
+  return !!progress && typeof progress === 'object' && Object.keys(progress).some((id) => LEGACY_ID.test(id))
+}
+
+function earliest(a: unknown, b: unknown): string | undefined {
+  const xs = [a, b].filter((v): v is string => typeof v === 'string' && DAY.test(v)).sort()
+  return xs[0]
+}
+
+/** Merge two raw word records that map to the same new id (union of practice days). */
+function mergeRaw(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
+  const sa = Array.isArray(a.stages) ? (a.stages as Record<string, unknown>[]) : []
+  const sb = Array.isArray(b.stages) ? (b.stages as Record<string, unknown>[]) : []
+  const stages = Array.from({ length: STAGE_COUNT }, (_, s) => {
+    const x = sa[s] ?? {}
+    const y = sb[s] ?? {}
+    const days = [...(Array.isArray(x.days) ? x.days : []), ...(Array.isArray(y.days) ? y.days : [])]
+    const out: Record<string, unknown> = { days }
+    const completed = earliest(x.completed, y.completed)
+    if (completed) out.completed = completed
+    if (x.marked === true || y.marked === true) out.marked = true
+    return out
+  })
+  const out: Record<string, unknown> = { stages }
+  const revealed = earliest(a.revealed, b.revealed)
+  const started = earliest(a.started, b.started)
+  if (revealed) out.revealed = revealed
+  if (started) out.started = started
+  return out
+}
+
+/** Rename old word ids in a raw save using `map`; ids without a match are dropped. Returns a new object. */
+export function migrateLegacyIds(raw: unknown, map: Map<string, string>): { save: unknown; moved: number; lost: number } {
+  if (!raw || typeof raw !== 'object') return { save: raw, moved: 0, lost: 0 }
+  const r = raw as Record<string, unknown>
+  const progress = (r.progress && typeof r.progress === 'object' ? r.progress : {}) as Record<string, unknown>
+  const out: Record<string, Record<string, unknown>> = {}
+  let moved = 0
+  let lost = 0
+  for (const [id, wp] of Object.entries(progress)) {
+    if (!wp || typeof wp !== 'object') continue
+    let target = id
+    if (LEGACY_ID.test(id)) {
+      const to = map.get(id)
+      if (!to) {
+        lost++
+        continue
+      }
+      target = to
+      moved++
+    }
+    const rec = wp as Record<string, unknown>
+    out[target] = out[target] ? mergeRaw(out[target], rec) : rec
+  }
+  return { save: { ...r, progress: out }, moved, lost }
 }

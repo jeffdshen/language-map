@@ -1,15 +1,39 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../store'
+import { emitCamera, loadCamera, saveCamera } from './camera'
+import { Minimap } from './Minimap'
 import { MapRenderer } from './renderer'
+
+const MOVE_KEYS: Record<string, [number, number]> = {
+  w: [0, -1],
+  a: [-1, 0],
+  s: [0, 1],
+  d: [1, 0],
+  arrowup: [0, -1],
+  arrowleft: [-1, 0],
+  arrowdown: [0, 1],
+  arrowright: [1, 0],
+}
+
+/** Cells per second when walking with the keyboard. */
+const WALK_SPEED = 14
+
+function typing(e: KeyboardEvent): boolean {
+  const el = e.target as HTMLElement | null
+  const tag = el?.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!el?.isContentEditable
+}
 
 export function MapView() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<MapRenderer | null>(null)
+  const panelOpen = useStore((s) => s.selected !== null)
 
   useEffect(() => {
     const canvas = canvasRef.current!
     const renderer = new MapRenderer(canvas)
     rendererRef.current = renderer
+    const packName = useStore.getState().pack!.manifest.pack
 
     const sync = () => {
       const s = useStore.getState()
@@ -22,7 +46,16 @@ export function MapView() {
         hovered: s.hovered,
       })
     }
-    let first = true
+
+    // Report the camera to overlays every frame, and remember it once it settles.
+    let saveTimer = 0
+    renderer.onCamera = (cam) => {
+      emitCamera(cam)
+      useStore.getState().setFocus(cam.x, cam.y)
+      window.clearTimeout(saveTimer)
+      saveTimer = window.setTimeout(() => saveCamera(packName, { x: cam.x, y: cam.y, zoom: cam.scale / cam.base }), 400)
+    }
+
     const unsub = useStore.subscribe((s, prev) => {
       if (
         s.pack !== prev.pack ||
@@ -38,11 +71,7 @@ export function MapView() {
         renderer.keepVisible(w.x, w.y, true)
       }
       if (s.camera && s.camera !== prev.camera) {
-        renderer.flyTo(s.camera.x, s.camera.y, s.camera.scale, s.camera.minScale, s.selected !== null)
-      }
-      if (first && s.pack && s.view) {
-        first = false
-        renderer.home()
+        renderer.flyTo(s.camera.x, s.camera.y, { resetZoom: s.camera.resetZoom, panelOpen: s.selected !== null })
       }
     })
 
@@ -55,15 +84,17 @@ export function MapView() {
         renderer.keepVisible(w.x, w.y, true)
       }
     }
+    sync()
+    resize()
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)
-    resize()
-    sync()
-    if (useStore.getState().pack) {
-      first = false
-      renderer.home()
-      const cam = useStore.getState().camera
-      if (cam) renderer.flyTo(cam.x, cam.y, cam.scale, cam.minScale, useStore.getState().selected !== null)
+    {
+      const s = useStore.getState()
+      const saved = loadCamera(packName)
+      const [sx, sy] = s.pack!.world.spawn
+      if (saved) renderer.jump(saved.x, saved.y, saved.zoom)
+      else renderer.jump(sx, sy)
+      if (s.camera) renderer.flyTo(s.camera.x, s.camera.y, { resetZoom: s.camera.resetZoom, panelOpen: s.selected !== null })
     }
 
     // ---- pointer interaction: pan, pinch, click, hover
@@ -138,15 +169,53 @@ export function MapView() {
       e.preventDefault()
       const p = local(e)
       const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY
-      renderer.zoomAt(p.x, p.y, Math.exp(-delta * 0.0018))
+      renderer.zoomAt(p.x, p.y, Math.exp(-delta * 0.0015))
     }
 
     const onDbl = (e: MouseEvent) => {
       const p = local(e)
-      renderer.zoomAt(p.x, p.y, 2)
+      renderer.zoomAt(p.x, p.y, 1.4)
     }
 
     const onLeave = () => useStore.getState().hover(null)
+
+    // ---- keyboard: walk with WASD / arrow keys, zoom with + and -
+    const held = new Set<string>()
+    let walkRaf = 0
+    let last = 0
+    const walk = (now: number) => {
+      const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60
+      last = now
+      let dx = 0
+      let dy = 0
+      for (const key of held) {
+        dx += MOVE_KEYS[key][0]
+        dy += MOVE_KEYS[key][1]
+      }
+      const len = Math.hypot(dx, dy)
+      if (len > 0) renderer.panCells((dx / len) * WALK_SPEED * dt, (dy / len) * WALK_SPEED * dt)
+      if (held.size) walkRaf = requestAnimationFrame(walk)
+      else {
+        walkRaf = 0
+        last = 0
+      }
+    }
+    const blocked = () => {
+      const s = useStore.getState()
+      return s.quest !== null || s.modal !== null
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (typing(e) || e.metaKey || e.ctrlKey || e.altKey || blocked()) return
+      const key = e.key.toLowerCase()
+      if (key in MOVE_KEYS) {
+        e.preventDefault()
+        held.add(key)
+        if (!walkRaf) walkRaf = requestAnimationFrame(walk)
+      } else if (key === '+' || key === '=') renderer.zoomBy(1.25)
+      else if (key === '-' || key === '_') renderer.zoomBy(1 / 1.25)
+    }
+    const onKeyUp = (e: KeyboardEvent) => held.delete(e.key.toLowerCase())
+    const onBlur = () => held.clear()
 
     canvas.addEventListener('pointerdown', onDown)
     canvas.addEventListener('pointermove', onMove)
@@ -155,11 +224,16 @@ export function MapView() {
     canvas.addEventListener('pointerleave', onLeave)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('dblclick', onDbl)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
 
     return () => {
       unsub()
       ro.disconnect()
       renderer.destroy()
+      window.clearTimeout(saveTimer)
+      if (walkRaf) cancelAnimationFrame(walkRaf)
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
@@ -167,22 +241,28 @@ export function MapView() {
       canvas.removeEventListener('pointerleave', onLeave)
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('dblclick', onDbl)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
     }
   }, [])
 
   return (
     <>
       <canvas ref={canvasRef} className="map-canvas" aria-label="Vocabulary map" />
-      <div className="zoom-controls">
-        <button title="Zoom in (+)" onClick={() => rendererRef.current?.zoomBy(1.6)}>
-          +
-        </button>
-        <button title="Zoom out (−)" onClick={() => rendererRef.current?.zoomBy(1 / 1.6)}>
-          −
-        </button>
-        <button title="Back to the center (H)" onClick={() => useStore.getState().flyHome()}>
-          ⌂
-        </button>
+      <div className={`map-hud ${panelOpen ? 'panel-open' : ''}`}>
+        <div className="zoom-controls">
+          <button type="button" title="Zoom in (+)" aria-label="Zoom in" onClick={() => rendererRef.current?.zoomBy(1.25)}>
+            +
+          </button>
+          <button type="button" title="Zoom out (−)" aria-label="Zoom out" onClick={() => rendererRef.current?.zoomBy(1 / 1.25)}>
+            −
+          </button>
+          <button type="button" title="Back to the start (H)" aria-label="Back to the start" onClick={() => useStore.getState().flyHome()}>
+            ⌂
+          </button>
+        </div>
+        <Minimap />
       </div>
     </>
   )

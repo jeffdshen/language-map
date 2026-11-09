@@ -31,7 +31,7 @@ function WordPanelInner({ i }: { i: number }) {
       <button type="button" className="icon close" onClick={() => select(null)} aria-label="Close">
         ×
       </button>
-      <header className="word-head" style={{ ['--region' as string]: pack.regions.themes[w.theme].color }}>
+      <header className="word-head" style={{ ['--region' as string]: pack.world.regions[w.region]?.color ?? pack.world.themes[w.theme].color }}>
         <div className="hanzi-big" lang="zh-Hans">
           {showForm ? w.hanzi : '?'}
         </div>
@@ -44,7 +44,7 @@ function WordPanelInner({ i }: { i: number }) {
         <div className="tags">
           <LevelBadge level={w.level} />
           <span className="badge">{POS_LABEL[w.pos]}</span>
-          <RegionTag theme={w.theme} />
+          <RegionTag region={w.region} />
         </div>
       </header>
 
@@ -96,11 +96,12 @@ function QuestSection({ i }: { i: number }) {
   const pack = useStore((s) => s.pack!)
   const wp = useStore((s) => s.save.progress[pack.words[i].id])
   const need = useStore((s) => s.save.settings.daysPerStage)
+  const count = useStore((s) => s.view!.stageCount)
   const today = useStore((s) => s.today)
   const { startQuest, stopQuest, openQuest, markStage, markKnown, resetWord } = useStore.getState()
-  const status = wordStatus(wp, need)
-  const cur = currentStage(wp, need)
-  const due = isDue(wp, need, today)
+  const status = wordStatus(wp, need, count)
+  const cur = currentStage(wp, need, count)
+  const due = isDue(wp, need, today, count)
 
   return (
     <section className="quest-section">
@@ -110,8 +111,8 @@ function QuestSection({ i }: { i: number }) {
       ) : status === 'revealed' ? (
         <div className="callout">
           <p>
-            Learn <b>{pack.words[i].hanzi}</b> in four stages, from hearing it to reading it. Each stage needs {need}{' '}
-            good day{need > 1 ? 's' : ''}.
+            Learn <b>{pack.words[i].hanzi}</b> in {count === STAGES.length ? 'four stages, from hearing it to reading it' : `${count} listening stages`}.
+            Each stage needs {need} good day{need > 1 ? 's' : ''}.
           </p>
           <div className="row">
             <button type="button" className="primary" onClick={() => startQuest(i)}>
@@ -135,7 +136,7 @@ function QuestSection({ i }: { i: number }) {
         <div className="callout done">✓ Done for today. Come back tomorrow for the next day of practice.</div>
       )}
       <ol className="stages">
-        {STAGES.map((st, s) => {
+        {STAGES.slice(0, count).map((st, s) => {
           const sp = wp?.stages[s]
           const done = stageDone(sp, need)
           return (
@@ -163,6 +164,9 @@ function QuestSection({ i }: { i: number }) {
           )
         })}
       </ol>
+      {count < STAGES.length ? (
+        <p className="hint">👂 Listening mode: reading stages are hidden (change it in the top bar or Settings).</p>
+      ) : null}
       <div className="row subtle">
         {status === 'active' ? (
           <button type="button" className="link" onClick={() => stopQuest(i)}>
@@ -189,6 +193,7 @@ function ExploreSection({ i, showForm }: { i: number; showForm: boolean }) {
   const pack = useStore((s) => s.pack!)
   const view = useStore((s) => s.view!)
   const revealNextWithChar = useStore((s) => s.revealNextWithChar)
+  const openChar = useStore((s) => s.openChar)
   const w = pack.words[i]
   const chain: number[] = []
   for (let a = w.anchor; a >= 0 && chain.length < 8; a = pack.words[a].anchor) chain.unshift(a)
@@ -199,7 +204,7 @@ function ExploreSection({ i, showForm }: { i: number; showForm: boolean }) {
       <h3>Explore</h3>
       {chain.length ? (
         <div className="explore-row">
-          <span className="label">Branches from</span>
+          <span className="label">Builds on</span>
           <div className="chips path">
             {chain.map((j, k) => (
               <span key={j} className="path-step">
@@ -211,8 +216,8 @@ function ExploreSection({ i, showForm }: { i: number; showForm: boolean }) {
         </div>
       ) : (
         <div className="explore-row">
-          <span className="label">Branches from</span>
-          <span className="muted">the center — a root word ({levelLabel(w.level)})</span>
+          <span className="label">Builds on</span>
+          <span className="muted">nothing — a root word ({levelLabel(w.level)})</span>
         </div>
       )}
       {kids.length ? (
@@ -235,12 +240,17 @@ function ExploreSection({ i, showForm }: { i: number; showForm: boolean }) {
             const nextHidden = nextHiddenWithChar(pack, view, ch, i)
             return (
               <div className="explore-row" key={ch}>
-                <span className="label">
+                <button
+                  type="button"
+                  className="label char-link"
+                  onClick={() => openChar(ch)}
+                  title={`Where ${ch} appears across the map`}
+                >
                   <span className="char" lang="zh-Hans">
                     {ch}
                   </span>{' '}
-                  in {all.length} other word{all.length > 1 ? 's' : ''}
-                </span>
+                  in {all.length} other word{all.length > 1 ? 's' : ''} ›
+                </button>
                 <div className="chips">
                   {explored.slice(0, 10).map((j) => (
                     <WordChip key={j} i={j} />

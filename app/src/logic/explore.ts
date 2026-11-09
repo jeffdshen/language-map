@@ -1,6 +1,6 @@
 import type { Pack } from '../data/pack'
-import { hanChars } from '../data/pack'
-import { isDue, stagesDone, wordStatus, type Progress, type WordStatus } from './progress'
+import { hanChars, wordsNear } from '../data/pack'
+import { isDue, STAGE_COUNT, stagesDone, wordStatus, type Progress, type WordStatus } from './progress'
 
 export const Vis = { Hidden: 0, Frontier: 1, Revealed: 2, Active: 3, Learned: 4 } as const
 export type Vis = (typeof Vis)[keyof typeof Vis]
@@ -14,6 +14,11 @@ export interface MapView {
   activeCount: number
   dueCount: number
   learnedByLevel: number[]
+  /** Per region: learned words, and words on the map (revealed, active or learned). */
+  regionLearned: Uint16Array
+  regionSeen: Uint16Array
+  /** Quest stages that count in the current quest mode. */
+  stageCount: number
   /** Monotonic counter so renderers can cheaply detect changes. */
   version: number
 }
@@ -33,16 +38,24 @@ const STATUS_VIS: Record<WordStatus, number> = {
   learned: Vis.Learned,
 }
 
-/**
- * Direct links that make a hidden word discoverable ("?" on the map). Only words at most one level
- * above `i` count, so the frontier grows outward ring by ring.
- */
-export function frontierLinks(pack: Pack, i: number): number[] {
-  const w = pack.words[i]
-  const out: number[] = []
-  if (w.anchor >= 0) out.push(w.anchor)
-  for (const j of pack.children[i]) if (pack.words[j].level <= w.level + 1) out.push(j)
-  for (const j of w.neighbors.slice(0, 4)) if (pack.words[j].level <= w.level + 1) out.push(j)
+/** Hidden words this close (in cells) to a word on the map show up as "?" (the fog lifts around explored words). */
+export const FRONTIER_RADIUS = 3.7
+/** Neighborhood used when ranking what to discover next. */
+const NEAR_RADIUS = 4.6
+
+const nearCache = new WeakMap<Pack, [number, number][][]>()
+
+/** Per word: nearby words on the map as [index, distance], nearest first. */
+export function nearby(pack: Pack): [number, number][][] {
+  let out = nearCache.get(pack)
+  if (!out) {
+    out = pack.words.map((w) =>
+      wordsNear(pack, w.x, w.y, NEAR_RADIUS)
+        .filter((j) => j !== w.i)
+        .map((j): [number, number] => [j, Math.hypot(pack.words[j].x - w.x, pack.words[j].y - w.y)]),
+    )
+    nearCache.set(pack, out)
+  }
   return out
 }
 
@@ -72,8 +85,16 @@ export function linksOf(pack: Pack, i: number, charLimit = 6): Link[] {
 
 let version = 0
 
-export function computeView(pack: Pack, progress: Progress, need: number, today: string): MapView {
+export function computeView(
+  pack: Pack,
+  progress: Progress,
+  need: number,
+  today: string,
+  stageCount = STAGE_COUNT,
+): MapView {
   const n = pack.words.length
+  const regionLearned = new Uint16Array(pack.world.regions.length)
+  const regionSeen = new Uint16Array(pack.world.regions.length)
   const vis = new Uint8Array(n)
   const stages = new Uint8Array(n)
   const due = new Uint8Array(n)
@@ -85,23 +106,26 @@ export function computeView(pack: Pack, progress: Progress, need: number, today:
   for (const w of pack.words) {
     const wp = progress[w.id]
     if (!wp) continue
-    const v = STATUS_VIS[wordStatus(wp, need)]
+    const v = STATUS_VIS[wordStatus(wp, need, stageCount)]
     vis[w.i] = v
-    stages[w.i] = stagesDone(wp, need)
+    stages[w.i] = stagesDone(wp, need, stageCount)
+    if (v >= Vis.Revealed && w.region >= 0) regionSeen[w.region]++
     if (v === Vis.Revealed || v === Vis.Active) openCount++
     if (v === Vis.Active) activeCount++
     if (v === Vis.Learned) {
       learnedCount++
       learnedByLevel[w.level]++
+      if (w.region >= 0) regionLearned[w.region]++
     }
-    if (isDue(wp, need, today)) {
+    if (isDue(wp, need, today, stageCount)) {
       due[w.i] = 1
       dueCount++
     }
   }
+  const near = nearby(pack)
   for (let i = 0; i < n; i++) {
     if (vis[i] < Vis.Revealed) continue
-    for (const j of frontierLinks(pack, i)) if (vis[j] === Vis.Hidden) vis[j] = Vis.Frontier
+    for (const [j, d] of near[i]) if (d <= FRONTIER_RADIUS && vis[j] === Vis.Hidden) vis[j] = Vis.Frontier
   }
   return {
     vis,
@@ -112,22 +136,32 @@ export function computeView(pack: Pack, progress: Progress, need: number, today:
     activeCount,
     dueCount,
     learnedByLevel,
+    regionLearned,
+    regionSeen,
+    stageCount,
     version: ++version,
   }
 }
 
-/** Ranked hidden words linked from `from` (or from the whole explored map when `from` is null). */
+/**
+ * Ranked hidden words to discover next, around `from` (or around everything explored when `from` is null).
+ * Nearby words on the map count most, then words linked by meaning or shared characters. Easier levels come
+ * first so each ring fills in before the next.
+ */
 export function revealCandidates(pack: Pack, view: MapView, from: number | null, limit = 8): number[] {
   const score = new Map<number, number>()
+  const near = nearby(pack)
+  const add = (j: number, v: number) => score.set(j, (score.get(j) ?? 0) + v)
   const consider = (i: number) => {
-    const boost = view.vis[i] === Vis.Learned ? 2 : 1
-    for (const l of linksOf(pack, i)) {
-      if (view.vis[l.j] > Vis.Frontier) continue
-      score.set(l.j, (score.get(l.j) ?? 0) + l.weight * boost)
-    }
+    const boost = view.vis[i] === Vis.Learned ? 1.5 : 1
+    for (const [j, d] of near[i]) if (view.vis[j] <= Vis.Frontier) add(j, (3 * boost) / (1 + (d * d) / 6))
+    for (const l of linksOf(pack, i)) if (view.vis[l.j] <= Vis.Frontier) add(l.j, 0.5 * l.weight * boost)
   }
-  if (from !== null) consider(from)
-  else for (let i = 0; i < view.vis.length; i++) if (view.vis[i] >= Vis.Revealed) consider(i)
+  if (from !== null) {
+    consider(from)
+    const region = pack.words[from].region
+    for (const j of score.keys()) if (pack.words[j].region === region) add(j, 1)
+  } else for (let i = 0; i < view.vis.length; i++) if (view.vis[i] >= Vis.Revealed) consider(i)
   const words = pack.words
   return [...score.keys()]
     .sort(
@@ -138,6 +172,12 @@ export function revealCandidates(pack: Pack, view: MapView, from: number | null,
         a - b,
     )
     .slice(0, limit)
+}
+
+/** The explored word nearest to (x, y) within `radius` cells, or null. */
+export function nearestExplored(pack: Pack, view: MapView, x: number, y: number, radius: number): number | null {
+  for (const j of wordsNear(pack, x, y, radius)) if (view.vis[j] >= Vis.Revealed) return j
+  return null
 }
 
 /** Words to reveal after progress on `from`, respecting the soft cap on open words. */

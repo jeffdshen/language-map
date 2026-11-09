@@ -28,7 +28,7 @@ export function QuestLog() {
   const row = (i: number, action: 'quest' | 'accept' | 'view') => {
     const w = pack.words[i]
     const wp = save.progress[w.id]
-    const cur = currentStage(wp, need)
+    const cur = currentStage(wp, need, view.stageCount)
     return (
       <li key={i}>
         <button

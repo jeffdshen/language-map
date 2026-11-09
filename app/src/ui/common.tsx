@@ -10,12 +10,20 @@ export function LevelBadge({ level }: { level: number }) {
   return <span className={`badge level level-${level}`}>{levelLabel(level)}</span>
 }
 
-export function RegionTag({ theme }: { theme: number }) {
-  const t = useStore((s) => s.pack!.regions.themes[theme])
+export function RegionTag({ region }: { region: number }) {
+  const r = useStore((s) => s.pack!.world.regions[region])
+  const flyToCell = useStore((s) => s.flyToCell)
+  if (!r) return null
   return (
-    <span className="badge region" style={{ ['--region' as string]: t.color }} title={t.en}>
-      {t.zh} · {t.en}
-    </span>
+    <button
+      type="button"
+      className="badge region"
+      style={{ ['--region' as string]: r.color }}
+      title={`${r.en} (${r.kind === 'wild' ? 'wilderness' : 'town'}) — go there`}
+      onClick={() => flyToCell(r.x, r.y)}
+    >
+      <span lang="zh-Hans">{r.zh}</span> · {r.en}
+    </button>
   )
 }
 
@@ -43,7 +51,7 @@ export function WordChip({ i, showGloss }: { i: number; showGloss?: boolean }) {
   const w = useStore((s) => s.pack!.words[i])
   const vis = useStore((s) => s.view!.vis[i])
   const fog = useStore((s) => s.save.settings.fogMode)
-  const color = useStore((s) => s.pack!.regions.themes[w.theme].color)
+  const color = useStore((s) => s.pack!.world.regions[w.region]?.color ?? s.pack!.world.themes[w.theme].color)
   const select = useStore((s) => s.select)
   const known = vis >= Vis.Revealed || fog !== 'hidden'
   const cls = vis === Vis.Learned ? 'learned' : vis === Vis.Active ? 'active' : vis >= Vis.Revealed ? 'revealed' : 'hidden'

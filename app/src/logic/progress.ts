@@ -74,35 +74,46 @@ export function stageDone(sp: StageProgress | undefined, need: number): boolean 
   return !!sp && (!!sp.marked || !!sp.completed || sp.days.length >= need)
 }
 
-export function stagesDone(wp: WordProgress | undefined, need: number): number {
+/**
+ * Quest mode: how many stages count, starting from the first. Listening-only play counts the two listening
+ * stages; full play counts all four. Practice on other stages is still recorded either way.
+ */
+export type QuestMode = 'full' | 'listening'
+
+export function activeStages(mode: QuestMode): number {
+  return mode === 'listening' ? 2 : STAGE_COUNT
+}
+
+export function stagesDone(wp: WordProgress | undefined, need: number, count = STAGE_COUNT): number {
   if (!wp) return 0
   let n = 0
-  for (const sp of wp.stages) if (stageDone(sp, need)) n++
+  for (let s = 0; s < count; s++) if (stageDone(wp.stages[s], need)) n++
   return n
 }
 
-export function isLearned(wp: WordProgress | undefined, need: number): boolean {
-  return !!wp && wp.stages.every((sp) => stageDone(sp, need))
+export function isLearned(wp: WordProgress | undefined, need: number, count = STAGE_COUNT): boolean {
+  return !!wp && stagesDone(wp, need, count) === count
 }
 
-/** First stage that is not done yet, or -1 when the word is learned. */
-export function currentStage(wp: WordProgress | undefined, need: number): number {
+/** First counted stage that is not done yet, or -1 when the word is learned. */
+export function currentStage(wp: WordProgress | undefined, need: number, count = STAGE_COUNT): number {
   if (!wp) return 0
-  return wp.stages.findIndex((sp) => !stageDone(sp, need))
+  for (let s = 0; s < count; s++) if (!stageDone(wp.stages[s], need)) return s
+  return -1
 }
 
-export function wordStatus(wp: WordProgress | undefined, need: number): WordStatus {
+export function wordStatus(wp: WordProgress | undefined, need: number, count = STAGE_COUNT): WordStatus {
   if (!wp) return 'hidden'
-  if (isLearned(wp, need)) return 'learned'
+  if (isLearned(wp, need, count)) return 'learned'
   if (wp.started) return 'active'
   if (wp.revealed) return 'revealed'
   return 'hidden'
 }
 
 /** Active word whose current stage has not had a success today. */
-export function isDue(wp: WordProgress | undefined, need: number, today: string): boolean {
+export function isDue(wp: WordProgress | undefined, need: number, today: string, count = STAGE_COUNT): boolean {
   if (!wp?.started) return false
-  const cur = currentStage(wp, need)
+  const cur = currentStage(wp, need, count)
   return cur >= 0 && !wp.stages[cur].days.includes(today)
 }
 

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import type { QuestMode } from '../logic/progress'
 import type { FogMode, FogScope } from '../logic/save'
 import { useStore } from '../store'
 import { speak } from '../tts'
@@ -56,7 +57,7 @@ export function SettingsModal() {
 
   const upload = async (file: File) => {
     try {
-      importSave(JSON.parse(await file.text()))
+      await importSave(JSON.parse(await file.text()))
       toast('Progress imported.', 'success')
     } catch (err) {
       toast(`Import failed: ${err instanceof Error ? err.message : String(err)}`, 'warn')
@@ -71,8 +72,8 @@ export function SettingsModal() {
           <label className="field">
             <span>Fog of war</span>
             <select value={settings.fogMode} onChange={(e) => updateSettings({ fogMode: e.target.value as FogMode })}>
+              <option value="dim">Dim — undiscovered landmarks are faded (default)</option>
               <option value="hidden">Hidden — only “?” next to explored words</option>
-              <option value="dim">Dim — undiscovered words are faded</option>
               <option value="off">Off — show every word</option>
             </select>
           </label>
@@ -94,6 +95,13 @@ export function SettingsModal() {
         </section>
         <section>
           <h3>Learning</h3>
+          <label className="field">
+            <span>Quest mode</span>
+            <select value={settings.questMode} onChange={(e) => updateSettings({ questMode: e.target.value as QuestMode })}>
+              <option value="full">Listening + reading — all four stages</option>
+              <option value="listening">Listening only — a word is learned after the two listening stages</option>
+            </select>
+          </label>
           <label className="field">
             <span>Good days needed per stage</span>
             <select

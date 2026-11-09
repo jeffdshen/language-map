@@ -2,7 +2,9 @@ import { useEffect } from 'react'
 import { MapView } from './map/MapView'
 import { useStore } from './store'
 import { AboutModal } from './ui/AboutModal'
+import { CharModal } from './ui/CharModal'
 import { Legend } from './ui/Legend'
+import { MapModal } from './ui/MapModal'
 import { QuestLog } from './ui/QuestLog'
 import { QuestModal } from './ui/QuestModal'
 import { SettingsModal } from './ui/SettingsModal'
@@ -80,6 +82,7 @@ export default function App() {
       if (s.quest || s.modal) return
       if (e.key === 'q' || e.key === 'Q') s.setQuestLog(!s.questLogOpen)
       else if (e.key === 'h' || e.key === 'H') s.flyHome()
+      else if (e.key === 'm' || e.key === 'M') s.setModal('map')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -116,6 +119,8 @@ export default function App() {
       <WelcomeModal />
       <SettingsModal />
       <AboutModal />
+      <MapModal />
+      <CharModal />
       <Toasts />
       {saveError ? (
         <div className="save-banner" role="alert">

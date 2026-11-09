@@ -13,7 +13,9 @@ export function AboutModal() {
           <h3>How to play</h3>
           <ul>
             <li>
-              <b>Drag</b> to pan, <b>scroll / pinch</b> to zoom, <b>click</b> a word to open it. Double-click zooms in.
+              <b>Walk</b> with <kbd>WASD</kbd> / arrow keys or drag the map; <b>scroll / pinch</b> zooms a little.
+              <b>Click</b> a landmark to open its word. The minimap shows the town you are in; click it (or press{' '}
+              <kbd>M</kbd>) for the world map with your progress in every region.
             </li>
             <li>
               Open a discovered word and <b>accept its quest</b>. Each day, do the current stage from the ❗ quest log.
@@ -21,14 +23,17 @@ export function AboutModal() {
             </li>
             <li>
               The four stages are: 👂 hear it in a sentence → 🗣️ hear it alone → 📖 read it in a sentence → 字 read
-              it alone.
+              it alone. In <b>listening-only</b> mode (top bar or Settings) a word counts as learned after the first
+              two; reading practice is still recorded if you do it.
             </li>
             <li>
-              Finishing stages reveals linked words. You can also click “?” spots, use 🔭 Discover, follow shared
-              characters in the word panel, or search.
+              Finishing stages reveals nearby and related words. You can also click faded landmarks, use 🔭 Discover
+              (it picks a good word near you), click a character in the word panel to see where else it appears, or
+              search.
             </li>
             <li>
-              Keys: <kbd>/</kbd> search · <kbd>Q</kbd> quest log · <kbd>H</kbd> center · <kbd>Esc</kbd> close ·
+              Keys: <kbd>WASD</kbd> walk · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>M</kbd> world map · <kbd>/</kbd> search ·{' '}
+              <kbd>Q</kbd> quest log · <kbd>H</kbd> back to the start · <kbd>Esc</kbd> close ·
               in quests <kbd>Space</kbd> replay, <kbd>Enter</kbd> continue.
             </li>
           </ul>
@@ -36,9 +41,11 @@ export function AboutModal() {
         <section>
           <h3>How the map is made</h3>
           <p>
-            The map is built offline by a deterministic pipeline and is the same for everyone. Level sets the ring and
-            topic sets the region. Each word branches from a related easier word (shared characters and meaning), and
-            nearby words have similar meanings.
+            The map is built offline by a deterministic pipeline and is the same for everyone. Words are packed onto
+            an even grid (the same density everywhere) with HSK level setting the distance from the center and related
+            words pulling together. Each level ring is then split into towns of similar size, named after their
+            topic; HSK 7–9 forms looser wilderness regions. Terrain follows the topics, and each word's landmark
+            follows its part of speech (homes and halls for nouns, people for verbs, trees for adjectives…).
           </p>
           <p className="muted">
             Pack <code>{manifest.pack}</code> · layout v{manifest.layoutVersion} · content{' '}

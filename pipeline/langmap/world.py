@@ -19,8 +19,10 @@ Steps (all deterministic):
 4. **Assignment.** Regions get exactly as many slots as they have words by
    capacity-constrained optimal transport (a power diagram), then words are
    matched to their region's slots (Hungarian algorithm), preserving the layout.
-5. **Cells.** Every land cell joins the region of its nearest slot; terrain comes
-   from smooth noise, the level, and the themes of nearby words.
+5. **Cells.** Land follows the same wobbly radius (plus small coast jitter and a
+   margin around every slot). Empty land cells join the region with the most
+   Gaussian-weighted word membership nearby, which keeps borders smooth; terrain
+   comes from smooth noise, the level, and the themes of nearby words.
 """
 
 from __future__ import annotations
@@ -45,6 +47,10 @@ WILD_LEVEL = 7
 SLOT_KEEP = {"town": 0.92, "wild": 0.78}
 REGION_CAP = {1: 30, 2: 34, 3: 40, 4: 50, 5: 60, 6: 70, 7: 160}
 PLAZA_RADIUS = 2.6  # empty central plaza (the spawn point)
+SOFT_REGION_SIGMA = 1.7  # smoothing of region borders between words
+COAST_JITTER = 2.0  # cells the coast wanders in and out (small-scale)
+SHAPE_WOBBLE = 0.12  # medium-scale wobble of level bands and coast, relative to radius
+SHAPE_SCALE = 26.0  # cells
 RING_WIDTH = 2.0  # slot quotas are exact per ring of this width (effective radius)
 REPULSE = 2.0  # spacing the force layout aims for, in cells (lattice spacing is 2)
 BAND_SLACK = 1.5  # how far (cells) a word may stray outside its level band during layout
@@ -146,6 +152,15 @@ def r_eff(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return np.hypot(x, y) / coast_factor(np.arctan2(y, x))
 
 
+def r_shape(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """``r_eff`` plus medium-scale noise (relative to the radius): the level bands and the
+    coast get bays and capes instead of smooth arcs, while rings of equal ``r_shape`` still
+    hold words at an even density."""
+    x, y = np.asarray(x, np.float64), np.asarray(y, np.float64)
+    n = fbm(x, y, SHAPE_SCALE, SEED + 12) - 0.5
+    return r_eff(x, y) * (1.0 + 2.0 * SHAPE_WOBBLE * n)
+
+
 # ---------------------------------------------------------------------------
 # slots
 
@@ -166,12 +181,12 @@ def make_slots(level_counts: list[int]) -> Slots:
     n = sum(level_counts)
     n_wild = n - n_town
     area = n_town * 4 / SLOT_KEEP["town"] + n_wild * 4 / SLOT_KEEP["wild"]
-    R = int(math.sqrt(area / math.pi) * 1.35) + 10
+    R = int(math.sqrt(area / math.pi) * 1.7) + 10
     ys, xs = np.mgrid[-R : R + 1, -R : R + 1]
     xs, ys = xs.ravel(), ys.ravel()
     lat = is_lattice(xs, ys)
     xs, ys = xs[lat], ys[lat]
-    re_ = r_eff(xs, ys)
+    re_ = r_shape(xs, ys)
     order = np.lexsort((xs, ys, re_))
     u_town = rank01(value_noise(xs, ys, 3.0, SEED + 1))
     u_wild = rank01(fbm(xs, ys, 8.0, SEED + 2))
@@ -200,6 +215,9 @@ def make_slots(level_counts: list[int]) -> Slots:
     if len(kept) < n:
         raise RuntimeError("slot lattice too small")
     xy = np.stack([xs[kept], ys[kept]], axis=1).astype(np.int64)
+    # The candidate square must contain every used ring whole, or the coast gets cut flat.
+    if int(np.abs(xy).max()) >= R - 2:
+        raise RuntimeError("slot lattice clipped; enlarge R")
     rk = re_[kept]
     cum = np.cumsum(level_counts)
     bands = np.array([PLAZA_RADIUS] + [float(rk[c - 1]) for c in cum])
@@ -504,12 +522,22 @@ def build_world(
         pos[wi[rows]] = slots.xy[si[cols]]
 
     # Cells.
-    slot_r = r_eff(slots.xy[:, 0].astype(np.float64), slots.xy[:, 1].astype(np.float64))
+    slot_r = r_shape(slots.xy[:, 0], slots.xy[:, 1])
     land_r = float(slot_r.max()) + 1.6
-    ext = int(np.abs(slots.xy).max()) + 4
+    ext = int(np.abs(slots.xy).max()) + 8
     x0 = y0 = -ext
     gy, gx = np.mgrid[-ext : ext + 1, -ext : ext + 1]
-    land = r_eff(gx.astype(np.float64), gy.astype(np.float64)) <= land_r
+    fgx, fgy = gx.astype(np.float64), gy.astype(np.float64)
+    # Coast: the wobbly outer ring plus small-scale noise (bays and capes), always keeping
+    # a margin of land around every word.
+    jitter = (fbm(fgx, fgy, 11.0, SEED + 9) - 0.5) * 2 * COAST_JITTER
+    land = r_shape(fgx, fgy) <= land_r + jitter
+    near_slot = np.zeros(gx.shape, dtype=bool)
+    near_slot[slots.xy[:, 1] + ext, slots.xy[:, 0] + ext] = True
+    from scipy.ndimage import binary_dilation
+
+    land |= binary_dilation(near_slot, structure=np.ones((3, 3), dtype=bool), iterations=2)
+    land = _largest_land(land)
     word_at = {(int(x), int(y)): i for i, (x, y) in enumerate(pos.tolist())}
     for _ in range(6):
         region_grid, word_dist = _rasterize(pos, region, land, gx, gy, x0, y0)
@@ -550,12 +578,28 @@ def build_world(
 
 
 def _rasterize(pos, region, land, gx, gy, x0, y0) -> tuple[np.ndarray, np.ndarray]:
-    """Each land cell joins the region of its nearest word. Returns (region grid, distance to
-    the nearest word)."""
+    """Each land cell joins the region with the most (Gaussian-weighted) words around it,
+    which gives smoother borders than plain nearest-word cells on the brick lattice. Word
+    cells keep their own region; cells far from every word fall back to the nearest word.
+    Returns (region grid, distance to the nearest word)."""
     cells = np.stack([gx[land], gy[land]], axis=1).astype(np.float64)
     dist, near = cKDTree(pos.astype(np.float64)).query(cells, k=1)
     region_grid = np.full(gx.shape, -1, dtype=np.int64)
     region_grid[land] = region[near]
+    px, py = pos[:, 0] - x0, pos[:, 1] - y0
+    best = np.zeros(gx.shape)
+    arg = np.full(gx.shape, -1, dtype=np.int64)
+    for r in range(int(region.max()) + 1):
+        ind = np.zeros(gx.shape)
+        sel = region == r
+        ind[py[sel], px[sel]] = 1.0
+        f = gaussian_filter(ind, sigma=SOFT_REGION_SIGMA, mode="constant", truncate=3.0)
+        upd = f > best + 1e-9
+        best[upd] = f[upd]
+        arg[upd] = r
+    soft = land & (arg >= 0) & (best > 1e-4)
+    region_grid[soft] = arg[soft]
+    region_grid[py, px] = region
     word_dist = np.full(gx.shape, np.inf)
     word_dist[land] = dist
     _fix_enclaves(region_grid, pos - np.array([x0, y0]))
@@ -604,6 +648,16 @@ def _fix_exclaves(pos, region, region_grid, land, x0, y0) -> bool:
                 px[i], py[i] = fxs[k], fys[k]
                 moved = True
     return moved
+
+
+def _largest_land(land: np.ndarray) -> np.ndarray:
+    """Fill lakes of sea inside the island so only the outer ocean is sea."""
+    from scipy.ndimage import label as cc_label
+
+    sea, _ = cc_label(~land)
+    outer = set(np.unique(np.concatenate([sea[0], sea[-1], sea[:, 0], sea[:, -1]])).tolist())
+    outer.discard(0)
+    return ~np.isin(sea, list(outer))
 
 
 def land_mask_dist(land: np.ndarray) -> np.ndarray:
@@ -660,14 +714,14 @@ def _terrain(
     px, py = pos[:, 0] - x0, pos[:, 1] - y0
     np.add.at(field_, (theme, py, px), 1.0)
     for t in range(k):
-        field_[t] = gaussian_filter(field_[t], sigma=2.2, mode="constant")
+        field_[t] = gaussian_filter(field_[t], sigma=3.0, mode="constant")
     local = np.argmax(field_, axis=0)
 
     level_grid = np.zeros((h, w), dtype=np.int64)
     level_grid[land] = np.array(reg_level)[region_grid[land]]
     wild = level_grid == WILD_LEVEL
 
-    detail = value_noise(fx, fy, 5.0, SEED + 5)
+    detail = value_noise(fx, fy, 7.0, SEED + 5)
     elev = fbm(fx, fy, 16.0, SEED + 6)
     moist = fbm(fx, fy, 20.0, SEED + 7)
     bias_m = np.array([t.get("wild", {}).get("moisture", 0.0) for t in themes_cfg])[local]
@@ -880,10 +934,10 @@ def world_stats(world: World, words: list[Word]) -> dict:
     levels = np.array([w.level for w in words])
     h, w = world.ground.shape
     gy, gx = np.mgrid[0:h, 0:w]
-    rr = r_eff((gx + world.x0).astype(np.float64), (gy + world.y0).astype(np.float64))
+    rr = r_shape(gx + world.x0, gy + world.y0)
     land = (world.region_grid >= 0) & (rr >= PLAZA_RADIUS)
-    wr = r_eff(world.pos[:, 0].astype(np.float64), world.pos[:, 1].astype(np.float64))
-    edges = np.linspace(0, float(rr[land].max()) + 1e-6, 9)
+    wr = r_shape(world.pos[:, 0], world.pos[:, 1])
+    edges = np.linspace(PLAZA_RADIUS, float(rr[land].max()) + 1e-6, 9)
     dens = []
     for a, b in itertools.pairwise(edges):
         cells = int(np.sum(land & (rr >= a) & (rr < b)))

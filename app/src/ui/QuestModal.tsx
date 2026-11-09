@@ -116,7 +116,7 @@ function QuestInner({ i, stage }: { i: number; stage: number }) {
 
   const stagesHeader = (
     <div className="quest-stages">
-      {STAGES.map((st, s) => (
+      {STAGES.slice(0, Math.max(view.stageCount, stage + 1)).map((st, s) => (
         <button
           type="button"
           key={st.key}

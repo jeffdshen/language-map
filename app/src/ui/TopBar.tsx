@@ -10,6 +10,8 @@ export function TopBar() {
   const total = useStore((s) => s.pack!.words.length)
   const { setModal, setQuestLog, discover } = useStore.getState()
   const questLogOpen = useStore((s) => s.questLogOpen)
+  const questMode = useStore((s) => s.save.settings.questMode)
+  const updateSettings = useStore((s) => s.updateSettings)
   const over = view.openCount >= cap
 
   return (
@@ -54,6 +56,23 @@ export function TopBar() {
           aria-label="Discover a new word"
         >
           🔭<span className="btn-label"> Discover</span>
+        </button>
+        <button
+          type="button"
+          className={`mode-toggle ${questMode}`}
+          onClick={() => updateSettings({ questMode: questMode === 'full' ? 'listening' : 'full' })}
+          title={
+            questMode === 'full'
+              ? 'Quests cover listening and reading. Click for listening only.'
+              : 'Listening only: words are learned after the two listening stages. Click to add reading.'
+          }
+          aria-label={`Quest mode: ${questMode === 'full' ? 'listening and reading' : 'listening only'}`}
+        >
+          {questMode === 'full' ? '👂📖' : '👂'}
+          <span className="btn-label">{questMode === 'full' ? ' Listen + read' : ' Listening'}</span>
+        </button>
+        <button type="button" className="icon" onClick={() => setModal('map')} title="World map (M)" aria-label="World map">
+          🗺️
         </button>
         <button type="button" className="icon" onClick={() => setModal('settings')} title="Settings" aria-label="Settings">
           ⚙️

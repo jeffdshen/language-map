@@ -14,7 +14,7 @@ uv run ruff check . && uv run ruff format --check .
 
 Running `build` twice produces byte-identical output. When you change the
 pipeline, review the diffs of `reports/zh-en.md`, `reports/zh-en-preview.png`
-and `data/zh-en/*.json`, and bump `LAYOUT_VERSION` in `langmap/layout.py` if
+and `data/zh-en/*.json`, and bump `LAYOUT_VERSION` in `langmap/world.py` if
 word positions move (the app uses it to tell the player the map changed).
 
 ## Steps
@@ -22,18 +22,47 @@ word positions move (the app uses it to tell the player the map changed).
 | Module | What it does |
 |---|---|
 | `sources.py` | Fetches pinned inputs from `sources.lock.json` and verifies checksums. |
-| `words.py` | Loads HSK 3.0 words (official ids, levels, POS, pinyin) and attaches CC-CEDICT glosses. Phrases missing a dictionary entry get glosses from `config/zh-en/gloss_overrides.json`. |
+| `words.py` | Loads the official 2025 HSK syllabus (HearMandarin dataset): ids, levels, Chinese POS, pinyin, traditional forms and a short teaching gloss, followed by CC-CEDICT senses. Also maps the old 2021-list ids (ivankra/hsk30) to the new ids, so the app can migrate old saves. |
 | `embed.py` | Builds one vector per word: the Numberbatch vector for the Chinese word plus a weighted vector for its English glosses. |
-| `themes.py` | Assigns each word to one of the curated regions in `config/zh-en/themes.json`, using zero-shot similarity to keyword centroids, part-of-speech rules, and two refinement passes. |
-| `relate.py` | Finds semantic neighbors (k = 8) and an *anchor* for each word: the best lower-level word by meaning, shared characters (idf-weighted), containment, and region. |
-| `layout.py` | Places words. Level sets the ring (HSK 1 in the center), region sets the sector, a spectral order within each region and anchor/neighbor springs set the angle, and frequency sets the radius within the ring. Collisions are resolved with a minimum distance of 1. |
+| `themes.py` | Assigns each word to one of the 17 curated topics in `config/zh-en/themes.json`, using zero-shot similarity to keyword centroids, part-of-speech rules, and two refinement passes. Topics set terrain and town names; they are not regions themselves. |
+| `relate.py` | Finds semantic neighbors (k = 8) and an *anchor* for each word: the best lower-level word by meaning, shared characters (idf-weighted), containment, and topic. |
+| `world.py` | Builds the tile world (see the module docstring and [docs/design.md](../docs/design.md#world-generation)): brick-lattice slots on a wobbly island, a force layout (level → distance from the center, anchors and neighbors pull together, repulsion keeps density even), size-capped regions per level, optimal-transport slot assignment, soft region borders, and terrain. |
 | `sentences.py` | Selects up to 6 Tatoeba sentences per word, preferring ones whose other words are at or below the word's level. Segments them with jieba, disambiguates readings with pypinyin, and keeps only simplified script. |
-| `export.py` | Writes `manifest.json`, `words.json`, `regions.json` and `sentences.json`, plus `reports/zh-en.md`. |
-| `preview.py` | Renders `reports/zh-en-preview.png`. |
+| `export.py` | Writes `manifest.json`, `words.json`, `world.json`, `sentences.json` and `legacy-ids.json`, plus `reports/zh-en.md` (counts, region table, density by distance). |
+| `preview.py` | Renders `reports/zh-en-preview.png` (whole world with region labels) and `reports/zh-en-closeup.png` (the center at game scale). |
+
+`uv run pytest` checks, among other things, that the world is deterministic, that no two words
+touch, that every region is one connected piece of a single level within its size cap, and that
+word density never increases outward.
 
 ## Pack format (`data/<pack>/`)
 
-- **`manifest.json`**: schema version, `layoutVersion`, `contentHash`, levels with ring radii, starter words, sources with licenses and checksums, and build stats.
-- **`words.json`**: `{"fields": [...], "rows": [[...], ...]}`, one row per word. Fields: `id, hanzi, pinyin, level, pos, theme, x, y, anchor, freq, glosses, neighbors, trad, alts`. `theme`, `anchor` (-1 = none) and `neighbors` are row indices.
-- **`regions.json`**: region names and colors, label positions, and geometry (ring radii, per-ring sector boundary angles) for drawing terrain.
-- **`sentences.json`**: `rows` of `[id, en_id, en, seg]`, where each `seg` token is `[text]` (punctuation), `[text, word]` (word with its dictionary pinyin), or `[text, word, pinyin]` (`word` = -1 when the token is not an HSK word). `byWord[i]` lists the sentence rows for word `i`.
+All files use schema 2. Coordinates are integer grid cells, with the start plaza at (0, 0) and y
+pointing down.
+
+- **`manifest.json`**: schema version, `layoutVersion`, `contentHash`, file names, levels (label,
+  word count, region count), starter words, counts, sources with licenses and checksums, and
+  build stats.
+- **`words.json`**: `{"fields": [...], "rows": [[...], ...]}`, one row per word. Fields: `id,
+  hanzi, pinyin, level, pos, theme, region, x, y, anchor, freq, glosses, neighbors, trad, alts`.
+  - `id` is the syllabus id (`w00001`…).
+  - `pos` is a coarse category (`noun`, `verb`, …).
+  - `theme`, `anchor` (-1 = none) and `neighbors` are row indices; `region` is a region id.
+- **`world.json`**:
+  - `grid` `{x0, y0, w, h}` and `spawn`.
+  - `ground`: ground code → `{name, color}`.
+  - `themes`: topic names, colors, biome and place suffix.
+  - `regions`: rows of `regionFields` = `id, level, kind (town|wild), theme, zh, en, count, cells,
+    x, y, color`, where `x, y` is the label position.
+  - `terrain`: one string per grid row of ground codes.
+  - `regionRuns`: per row, run-length `[regionId, length, …]` (-1 = sea).
+- **`sentences.json`**: `rows` of `[id, en_id, en, seg]`.
+  - Each `seg` token is one of:
+    - `[text]` (punctuation)
+    - `[text, word]` (a word with its dictionary pinyin)
+    - `[text, word, pinyin]`
+
+    `word` is -1 when the token is not an HSK word.
+  - `byWord[i]` lists the sentence rows for word `i`.
+- **`legacy-ids.json`**: for each old (schema 1) band (`L1`…), the new word number for each old
+  sequence number (0 = no match). The app uses it once to migrate old saves.
