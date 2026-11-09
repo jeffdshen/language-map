@@ -6,8 +6,13 @@ semantics, level). First instance: Mandarin Chinese, HSK 3.0. Design stays
 language-agnostic.
 
 ## Decisions so far
+- **Language pair:** Mandarin Chinese → English (learner sees English glosses).
 - **Platform:** static web app, local-first (progress in IndexedDB; export/import JSON).
-- **Word list:** HSK 3.0 (n1–n6 + n7 = bands 7–9), ~11.5k words.
+- **Word list:** HSK 3.0, all levels including advanced (n1–n6 + n7 = bands 7–9),
+  ~11.5k words, all in v1.
+- **Script:** simplified characters only (HSK standard); traditional forms kept
+  in the data for possible later use.
+- **Pinyin:** tone marks, no tone coloring.
 - **Determinism:** map, word data, and sentences are produced by an offline,
   seeded, version-pinned pipeline and **committed as artifacts**. Procedural
   generation is a build-time tool for iteration, never runtime. Same world for
@@ -97,8 +102,3 @@ pipeline/ (Python, offline)          app/ (TypeScript, Vite)
 5. **M4 Progress:** stages, quests (word-only stages first), local storage, fog/reveal.
 6. **M5 Sentences:** Tatoeba selection + TTS → sentence-based stages.
 7. **M6 Polish:** biomes/terrain, appearance hints, assets/tilemaps, sharing.
-
-## Open questions
-- Simplified only, or show traditional too?
-- Tone colors on pinyin?
-- Should n7 (bands 7–9, ~5.6k words) be in v1 or deferred?
