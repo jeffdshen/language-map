@@ -1,47 +1,57 @@
 # language-map · 语言地图
 
-A vocabulary world map for language learning, played like a small 2D game. Every word is a
-landmark in a town on a tile map, so where a word sits, what it looks like and which words live
-next to it all hint at what it means. You start in the central plaza and explore outward one quest
-at a time.
+A vocabulary world map for language learning, played like a small 2D game. Every word lives in
+a landmark (a cottage, a shop, a tree, a mountain, a cloud…) in a town you can walk around, so
+where a word sits and which words live next to it hint at what it means. You start at the
+fountain in the central plaza and explore outward.
 
 First pack: **Mandarin Chinese → English, HSK 3.0 (official 2025 exam syllabus)**. It has all
 11,000 words, HSK 1 to 7–9. The data model and app are language-agnostic.
 
 **Live:** <https://jeffdshen.github.io/language-map/>
 
-![Walking around the HSK 1 plaza: word landmarks over terrain, minimap with the current town](docs/img/map-overview.webp)
+![Walking through an HSK 1 town: word landmarks along roads, the player, and the minimap](docs/img/map-overview.webp)
 
 ## How it works
 
 - **The world.**
   - The map is an island on a grid. HSK 1 surrounds the start plaza, and each band further out
     is the next level.
-  - Each band is split into **towns** of similar size (about 30 words in HSK 1, up to 70 in
-    HSK 6), named after their dominant topic, e.g. 菜果园 *Vegetable Orchard* or
-    问题港 *Question Harbor*.
-  - HSK 7–9 is the **wilderness**: bigger, looser regions with forests, lakes, peaks and dunes.
-  - Related words are pulled together. Word density is even everywhere, and it never gets
-    denser further out.
+  - Words live in small **hamlets** of 1–7 related words, with open land, roads and paths in
+    between, so a town is something you wander through rather than a packed grid.
+  - Each band is split into **towns** of similar size (about 25 words in HSK 1, up to 60 in
+    HSK 6), named after a typical word, e.g. 苹果果园 *Apple Orchard* or 年钟楼
+    *Year Clocktower*. Each town has a **hall**, and roads link the halls.
+  - HSK 7–9 is the **wilderness**: bigger, sparser regions of forests, lakes, peaks and dunes.
+  - Related words are pulled together (similar meaning, shared characters, "builds on"). Word
+    density is even in every town and never gets denser further out.
 - **Playing.**
-  - The camera stays zoomed in like a game character. Walk with WASD / arrow keys or drag, and
-    zoom a little with scroll, pinch or `+`/`−`.
+  - You are a small character. Walk with WASD / arrow keys (hold Shift to run), or click or tap
+    anywhere to walk there. Walk up to a landmark and press `E` (or click it) to open its word.
+  - `N` walks to the next unexplored word nearby. `C` re-centers the camera on you.
+  - The camera stays zoomed in on one screen of a town; zoom a little with scroll, pinch or
+    `+`/`−`.
   - The minimap (bottom right) shows the town you're in and its progress.
-  - Press `M` or click the minimap for the **world map**: every region with
-    learned/explored progress, sorted by level.
-- **Landmarks.** A word's landmark shows its part of speech:
-  - homes and halls for nouns
-  - people for verbs
-  - trees for adjectives
-  - signposts for function words
-  - …
-
-  Its town's terrain and theme hint at the meaning. Explored words get a name plate with
-  pinyin.
+  - Press `M` or click the minimap for the **world map**: every region with learned/explored
+    progress, sorted by level.
+- **Landmarks** come from the ground they stand on: cottages, shops, barns and towers in towns;
+  trees, pines, boulders, mountains, dunes, mesas, crystals, clouds and lily pads in the wilds.
+  The word is written on the landmark. Explored words get their pinyin underneath.
+- **Quick word card.** Opening a word shows a small card with one-tap choices (keys `1`–`4`):
+  - a new word: 👁 **Reveal** (shows it and says it) or ✓ **Know it**
+  - a word you've seen: ⚔️ **Learn** (start its quests), ✓ Know it, 💬 **Example** (a sentence,
+    English on demand), or 📖 **Details**
+  - only 📖 Details opens the full page (meanings, quest stages, sentences, characters, related
+    words).
+- **Halls.** Each town's hall (the flagged building at its center, or ⚑ Hall on the minimap) has
+  two modes:
+  - ⚔️ **Challenge**: a quick round of 8 of the town's words, multiple choice. Every word you
+    get right is marked as known; a miss reveals the word with its meaning and an example, so it
+    goes on your map to learn.
+  - 🏋️ **Train**: go through the town's due quests one after another.
 - **Fog.** Unexplored words are *dimmed* by default: their landmarks and hanzi are faded, so you
   can see the whole world and still tell what you've found. It can be set to *hidden* (only "?"
-  spots next to explored words) or *off*. Click a faded landmark to reveal it, or use 🔭 Discover
-  to pick a good word near you.
+  spots next to explored words) or *off*. 🔭 Discover picks a good word near you.
 - **Quests.**
   - Each word has four stages: **hear it in a sentence → hear it alone → read it in a sentence
     → read it alone**.
@@ -50,23 +60,25 @@ First pack: **Mandarin Chinese → English, HSK 3.0 (official 2025 exam syllabus
     You can mark any stage, or the whole word, as already known.
 - **Listening-only mode.** Toggle 👂 *Listening* vs 👂📖 *Listen + read* in the top bar. In
   listening-only mode a word counts as learned after the two listening stages, and all progress
-  displays use that. Reading practice is still recorded.
+  displays use that; hall challenges play the word's audio instead of showing the hanzi.
+  Reading practice is still recorded.
 - **Pacing.** Finishing a stage reveals a nearby or related word, and learning a word reveals
   two, favoring easier levels. A soft cap on open words (25 by default) pauses auto-reveal.
-- **Character links.** In the word panel, click any character to see every word that uses it:
+- **Character links.** In the word details, click any character to see every word that uses it:
   where they are on the map, how many you've found and learned in each region, and a sorted list.
 
 ![World map: towns and wilderness regions with per-region progress](docs/img/world-map.webp)
 
-![Word panel with quest stages](docs/img/word-panel.webp)
+![Quick word card next to the player](docs/img/word-panel.webp)
 
 Other features:
 - Search by 汉字, pinyin (tone marks optional) or English.
 - A quest log (`q`) lists what's due today.
-- Shortcuts: `/` search, `h` back to the start, `m` world map, `Esc` close.
+- Shortcuts: `/` search, `h` back to the start, `m` world map, `Esc` close; the legend (bottom
+  left) lists the rest.
 - Bulk "I know everything up to HSK n".
 - Progress export/import.
-- Works on mobile.
+- Works on mobile (tap to walk; the word card becomes a bottom sheet).
 
 Audio uses the browser's built-in speech synthesis (`zh-CN`); if no Chinese voice is installed,
 the app tells you to read the pinyin aloud instead.
@@ -97,8 +109,8 @@ must be set to **GitHub Actions**).
 
 | Path | What |
 |---|---|
-| `app/` | Vite + React + TypeScript app. `src/map/` is the tile renderer, camera and minimap, `src/logic/` holds the pure progress, exploration and search logic (unit-tested), `src/ui/` the panels and modals, and `src/store.ts` the app state (zustand). |
-| `data/zh-en/` | The committed language pack the app loads: words with grid positions, the world (terrain and regions), sentences, manifest. |
+| `app/` | Vite + React + TypeScript app. `src/map/` is the tile renderer, landmarks, player, camera and minimap, `src/logic/` holds the pure progress, exploration, walking (A*) and hall-challenge logic (unit-tested), `src/ui/` the panels and modals, and `src/store.ts` the app state (zustand). |
+| `data/zh-en/` | The committed language pack the app loads: words with grid positions, the world (terrain, roads and regions with their halls), sentences, manifest. |
 | `pipeline/` | Offline, deterministic Python pipeline that builds `data/` from pinned sources. See [pipeline/README.md](pipeline/README.md). |
 | `docs/design.md` | Design notes and decisions. |
 

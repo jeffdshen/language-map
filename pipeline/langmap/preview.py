@@ -28,13 +28,17 @@ def _hex(c: str) -> tuple[int, int, int]:
     return tuple(int(c[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
 
 
-def _base(world: World, cell: int) -> Image.Image:
-    """Ground colors with region borders (darker where the HSK level changes)."""
+def _base(world: World, cell: int, window: tuple[slice, slice] | None = None) -> Image.Image:
+    """Ground colors with region borders (darker where the HSK level changes).
+
+    ``window`` crops the grid (array rows, cols) before upscaling.
+    """
+    win = window or (slice(None), slice(None))
     codes = sorted(GROUND)
     lut = np.array([_hex(GROUND[c][1]) for c in codes], dtype=np.uint8)
-    gi = np.searchsorted(np.array(codes), world.ground)
-    rgb = lut[gi].repeat(cell, axis=0).repeat(cell, axis=1).astype(np.float64)
-    reg = world.region_grid
+    gi = np.searchsorted(np.array(codes), world.ground[win])
+    rgb = lut[gi].repeat(cell, axis=0).repeat(cell, axis=1).astype(np.float32)
+    reg = world.region_grid[win]
     level = np.array([r["level"] for r in world.regions] + [0])[reg]
     h, w = reg.shape
     for dy, dx in ((0, 1), (1, 0)):
@@ -66,6 +70,13 @@ def render_preview(
             [cx - cell * 0.32, cy - cell * 0.32, cx + cell * 0.32, cy + cell * 0.32],
             fill=c + (255,),
         )
+    for x, y in world.halls.tolist():
+        cx, cy = (x - world.x0 + 0.5) * cell, (y - world.y0 + 0.5) * cell
+        d.rectangle(
+            [cx - cell, cy - cell, cx + cell, cy + cell],
+            fill=(150, 40, 40, 255),
+            outline=(255, 255, 255, 255),
+        )
     f = _font(max(10, int(cell * 1.5)))
     for r in world.regions:
         cx, cy = (r["x"] - world.x0 + 0.5) * cell, (r["y"] - world.y0 + 0.5) * cell
@@ -83,19 +94,21 @@ def render_preview(
 
 
 def render_closeup(
-    out: Path, world: World, hanzi: list[str], radius: int = 24, cell: int = 28
+    out: Path, world: World, hanzi: list[str], radius: int = 32, cell: int = 22
 ) -> None:
     """The middle of the map at roughly game scale, with every word labeled."""
-    full = _base(world, cell)
     cx, cy = -world.x0, -world.y0
-    box = (
-        (cx - radius) * cell,
-        (cy - radius) * cell,
-        (cx + radius + 1) * cell,
-        (cy + radius + 1) * cell,
-    )
-    img = full.crop(box)
+    window = (slice(cy - radius, cy + radius + 1), slice(cx - radius, cx + radius + 1))
+    img = _base(world, cell, window)
     d = ImageDraw.Draw(img, "RGBA")
+    for x, y in world.halls.tolist():
+        if abs(x) > radius or abs(y) > radius:
+            continue
+        px, py = (x + radius + 0.5) * cell, (y + radius + 0.5) * cell
+        d.rectangle(
+            [px - cell * 0.45, py - cell * 0.45, px + cell * 0.45, py + cell * 0.45],
+            fill=(150, 40, 40, 255),
+        )
     f = _font(int(cell * 0.9))
     for i, (x, y) in enumerate(world.pos.tolist()):
         if abs(x) > radius or abs(y) > radius:

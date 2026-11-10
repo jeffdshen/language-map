@@ -1,21 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
-import { drawLandmark, LANDMARK_LABEL, type LandmarkKind } from '../map/draw'
+import { drawLandmark, LANDMARK_LABEL, LANDMARK_TOP, landmarkWidth, type LandmarkKind } from '../map/landmarks'
 import type { FogMode } from '../logic/save'
 import { useStore } from '../store'
 
-const KINDS = Object.keys(LANDMARK_LABEL) as LandmarkKind[]
+/** Landmarks by where they appear. */
+const BIOMES: [string, LandmarkKind[]][] = [
+  ['Towns', ['cottage', 'shop', 'tower', 'dome', 'barn', 'cabin']],
+  ['Countryside', ['tree', 'blossom', 'fruit', 'pine', 'haystack', 'lily']],
+  ['Wilds', ['rock', 'mountain', 'dune', 'mesa', 'crystal', 'cloud']],
+]
 
 function LandmarkIcon({ kind }: { kind: LandmarkKind }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const c = ref.current!
     const dpr = window.devicePixelRatio || 1
-    const size = 26
+    const size = 36
+    const u = 19
     c.width = size * dpr
     c.height = size * dpr
     const g = c.getContext('2d')!
     g.setTransform(dpr, 0, 0, dpr, 0, 0)
-    drawLandmark(g, kind, size / 2, size * 0.52, size, { color: [196, 120, 86], h: 0.37, muted: 0 })
+    const cy = Math.max(size - u * 0.5, u * LANDMARK_TOP[kind] + 2)
+    drawLandmark(g, kind, size / 2, Math.min(cy, size - u * 0.42), {
+      u,
+      w: Math.min(size - 2, landmarkWidth(kind, 0.72) * u),
+      tint: [150, 170, 140],
+      h: 0.37,
+      muted: 0,
+    })
   }, [kind])
   return <canvas ref={ref} className="landmark-icon" aria-hidden="true" />
 }
@@ -51,13 +64,13 @@ export function Legend() {
         <div className="legend-body">
           <ul>
             <li>
-              <span className="sw learned">★</span> learned — gold name plate
+              <span className="sw learned">★</span> learned — gold plaque
             </li>
             <li>
-              <span className="sw active" /> quest in progress — blue plate, pips show stages done
+              <span className="sw active" /> quest in progress — blue plaque, dots show stages done
             </li>
             <li>
-              <span className="sw revealed" /> discovered — white plate
+              <span className="sw revealed" /> discovered — the word, no plaque
             </li>
             <li>
               <span className="sw frontier">?</span> faded: not discovered yet
@@ -65,17 +78,26 @@ export function Legend() {
             <li>
               <span className="sw due">!</span> quest due today
             </li>
+            <li>
+              <span className="sw hall">⚑</span> region hall — challenge and training
+            </li>
           </ul>
-          <ul className="shapes">
-            {KINDS.map((k) => (
-              <li key={k}>
-                <LandmarkIcon kind={k} /> {LANDMARK_LABEL[k]}
-              </li>
-            ))}
-          </ul>
+          {BIOMES.map(([name, kinds]) => (
+            <div key={name}>
+              <div className="legend-head">{name}</div>
+              <ul className="shapes">
+                {kinds.map((k) => (
+                  <li key={k}>
+                    <LandmarkIcon kind={k} /> {LANDMARK_LABEL[k]}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
           <p className="muted">
-            The fountain is the start. HSK 1 towns surround it; each level is a ring of towns farther out, split by
-            bold borders, and HSK 7–9 is the wilderness at the edge. Towns group words by topic.
+            Each word lives in a landmark that fits the ground around it. The fountain is the start: HSK 1 towns
+            surround it, each level is a ring of towns farther out (split by bold borders), and HSK 7–9 is the
+            wilderness at the edge.
           </p>
         </div>
       ) : null}

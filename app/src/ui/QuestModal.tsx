@@ -19,7 +19,7 @@ interface Result {
 export function QuestModal() {
   const quest = useStore((s) => s.quest)
   if (!quest) return null
-  return <QuestInner key={`${quest.word}:${quest.stage}`} i={quest.word} stage={quest.stage} />
+  return <QuestInner key={`${quest.word}:${quest.stage}`} i={quest.word} stage={quest.stage} region={quest.region} />
 }
 
 function useVoice(lang: string): boolean {
@@ -28,7 +28,7 @@ function useVoice(lang: string): boolean {
   return ok
 }
 
-function QuestInner({ i, stage }: { i: number; stage: number }) {
+function QuestInner({ i, stage, region }: { i: number; stage: number; region?: number }) {
   const pack = useStore((s) => s.pack!)
   const w = pack.words[i]
   const wp = useStore((s) => s.save.progress[w.id])
@@ -89,10 +89,15 @@ function QuestInner({ i, stage }: { i: number; stage: number }) {
     setPhase('result')
   }
 
+  // Training at a hall stays in that region.
   const nextDue = useMemo(() => {
+    if (region !== undefined) {
+      for (const j of pack.regionWords[region] ?? []) if (view.due[j] && j !== i) return j
+      return null
+    }
     for (let j = 0; j < view.due.length; j++) if (view.due[j] && j !== i) return j
     return null
-  }, [view, i])
+  }, [view, i, region, pack])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -105,7 +110,7 @@ function QuestInner({ i, stage }: { i: number; stage: number }) {
         if (phase === 'prompt') setPhase('answer')
         else if (phase === 'answer') grade(true)
         else if (phase === 'result') {
-          if (nextDue !== null) openQuest(nextDue)
+          if (nextDue !== null) openQuest(nextDue, undefined, region)
           else closeQuest()
         }
       }
@@ -121,7 +126,7 @@ function QuestInner({ i, stage }: { i: number; stage: number }) {
           type="button"
           key={st.key}
           className={`stage-tab ${s === stage ? 'on' : ''}`}
-          onClick={() => openQuest(i, s)}
+          onClick={() => openQuest(i, s, region)}
           title={st.title}
         >
           {st.icon}
@@ -329,7 +334,7 @@ function QuestInner({ i, stage }: { i: number; stage: number }) {
               View on map
             </button>
             {nextDue !== null ? (
-              <button type="button" className="primary" onClick={() => openQuest(nextDue)}>
+              <button type="button" className="primary" onClick={() => openQuest(nextDue, undefined, region)}>
                 Next quest ▸
               </button>
             ) : (

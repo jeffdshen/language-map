@@ -19,8 +19,8 @@ export function RegionTag({ region }: { region: number }) {
       type="button"
       className="badge region"
       style={{ ['--region' as string]: r.color }}
-      title={`${r.en} (${r.kind === 'wild' ? 'wilderness' : 'town'}) — go there`}
-      onClick={() => flyToCell(r.x, r.y)}
+      title={`${r.en} (${r.kind === 'wild' ? 'wilderness' : 'town'}) — travel to its hall`}
+      onClick={() => flyToCell(r.x, r.y, true)}
     >
       <span lang="zh-Hans">{r.zh}</span> · {r.en}
     </button>

@@ -24,10 +24,10 @@ function MapModalInner() {
   const [hover, setHover] = useState(-1)
   const herePos = useMemo((): [number, number] | null => {
     const cam = currentCamera()
-    return cam ? [cam.x, cam.y] : null
+    return cam ? [cam.px ?? cam.x, cam.py ?? cam.y] : null
   }, [])
   const travel = (x: number, y: number) => {
-    flyToCell(x, y)
+    flyToCell(x, y, true)
     setModal(null)
   }
   const byLevel = useMemo(() => {

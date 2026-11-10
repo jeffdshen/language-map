@@ -1,7 +1,7 @@
 # Language Map — Design
 
-A vocab "world map" played like a small 2D game: each word is a landmark in a town on a tile
-map. Placement encodes relationships (level, meaning, shared characters). The first instance is
+A vocab "world map" played like a small 2D game: each word lives in a landmark in a walkable
+town on a tile map, and you explore it as a small character. Placement encodes relationships (level, meaning, shared characters). The first instance is
 Mandarin Chinese with the HSK 3.0 syllabus. The design stays language-agnostic.
 
 ## Decisions so far
@@ -21,14 +21,25 @@ Mandarin Chinese with the HSK 3.0 syllabus. The design stays language-agnostic.
   build-time tool, never runtime. Everyone gets the same world, so the mental map is shareable
   and stable.
 - **Game map, not a zoomable chart.**
-  - The world is a 2D tile grid. The camera stays at "one screen of a town" (zoom limited to
-    0.55–1.6× of the default).
+  - The world is a 2D tile grid. The camera follows a player character and stays at "one
+    screen of a town" (zoom limited to 0.55–1.6× of the default).
   - The minimap and a world map (overview) replace infinite zoom.
   - Regions are towns with similar word counts, not geometric sectors.
-  - No link lines are drawn on the map. Relationships are listed in the word panel instead, and
-    the character view shows where a character appears.
+  - No link lines are drawn on the map. Relationships are listed in the word details instead,
+    and the character view shows where a character appears.
+- **Walkable, not packed.** Words sit in small hamlets (1–7 related words) with open land, roads
+  and ponds in between, like a game town you wander through. About 7 words per 100 land cells
+  in towns and 5 in the wilderness.
 - **Density is a hard rule.** Word density is even in towns and lower in the wilderness. It
   never increases further out.
+- **Landmarks come from the biome, not the word.** A word is written on a cottage, shop, barn,
+  tree, mountain, dune, cloud, lily pad, … picked from the ground it stands on. They don't try
+  to depict the meaning, and the art avoids leaning on Chinese clichés.
+- **Light interaction first.** Opening a word shows a small card with one-tap choices (reveal /
+  know it / learn / example). Only "Details" opens the full page, so going through known words
+  is fast.
+- **Halls.** Every region has a hall: ⚔️ Challenge (multiple-choice rounds that clear words you
+  already know, several at a time) and 🏋️ Train (the region's due quests in a row).
 - **Exploration:**
   - Fog of war, with a soft cap on open (revealed, unfinished) words.
   - The default fog mode is *dim*: unexplored landmarks are faded but visible. The other modes
@@ -43,15 +54,16 @@ Mandarin Chinese with the HSK 3.0 syllabus. The design stays language-agnostic.
 - **Quest mode:** *listen + read* (all 4 stages) or *listening only* (stages 1–2).
   - It is a display/logic lens, not separate data. All stage progress is always recorded.
   - In listening-only mode, "learned", the counters, region progress, reveal rewards and the
-    quest log consider only the first two stages.
+    quest log consider only the first two stages. Hall challenges play audio instead of
+    showing hanzi.
   - Switching back loses nothing.
 
 ## Architecture
 ```
 pipeline/ (Python, offline)                    app/ (TypeScript, Vite, React)
   sources -> words -> embed -> themes  ->        data/zh-en/*.json (committed)
-          -> relate -> world (grid)      ->      tile renderer + minimap + world map
-          -> sentences -> export/preview         + quest UI + local progress
+          -> relate -> world (grid)      ->      tile renderer + player + minimap + world map
+          -> sentences -> export/preview         + word card, halls, quests + local progress
 ```
 The app has no backend. It is a static site that loads the committed pack and stores progress in
 the browser. GitHub Pages deploys it from Actions on every push to `main`.
@@ -70,14 +82,15 @@ the browser. GitHub Pages deploys it from Actions on every push to `main`.
 All inputs are pinned with sha256 checksums in `pipeline/sources.lock.json`. The code is MIT.
 The generated pack is CC BY-SA 4.0 (see `ATTRIBUTION.md`).
 
-### Pack format (schema 2)
-Documented in `pipeline/README.md`.
+### Pack format (schema 3)
+Documented in `pipeline/README.md`. Schema 3 adds road, trail and bridge ground codes, and a
+region's `x, y` is now its hall.
 - `manifest.json`: levels (with word and region counts), starter words, `layoutVersion`,
   `contentHash`, sources.
 - `words.json`: columnar rows `id, hanzi, pinyin, level, pos, theme, region, x, y, anchor, freq,
   glosses, neighbors, trad, alts`. `x, y` are integer grid cells.
-- `world.json`: the grid, terrain (one ground-code string per row), region table and
-  run-length region map.
+- `world.json`: the grid, terrain (one ground-code string per row, including roads), region
+  table (with hall positions) and run-length region map.
 - `sentences.json`: segmented sentences with per-token pinyin and HSK word links (loaded lazily).
 - `legacy-ids.json`: old id → new id (loaded only when an old save needs migrating).
 
@@ -88,7 +101,7 @@ progress.
 - `Word { id, form, reading, glosses[], level, pos, freq, theme, region, x, y, anchor,
   neighbors[] }`. For zh, a word's characters are its components; another language could use
   morphemes or roots.
-- `Region { id, level, kind: town|wild, theme, zh, en, count, cells, label x/y, color }`.
+- `Region { id, level, kind: town|wild, theme, zh, en, count, cells, hall x/y, color }`.
 - `World { grid, ground codes per cell, region id per cell }`.
 - Links derived at load time:
   - anchor (the simpler word it builds on)
@@ -102,49 +115,58 @@ progress.
 ## World generation
 `pipeline/langmap/world.py`. Everything is seeded and deterministic.
 
-1. **Slots.**
-   - Words sit on a *brick lattice*: even rows, every other cell, with alternate rows offset.
-     No two words touch (Chebyshev distance ≥ 2), each word has room for a label, and odd
-     rows stay free for walking.
-   - Slots are taken outward in order of a wobbly radius, `r_shape`: an angular coast factor
-     times medium-scale fbm noise (±12%). This makes the island and the level bands organic
-     rather than circular.
-   - Slot quotas are exact per 2-cell ring:
-     - Towns (HSK 1–6) keep ~92% of the lattice. The gaps become plazas and parks.
-     - The wilderness (HSK 7–9) keeps ~78%. The gaps grow into lakes, peaks and clearings.
-   - So density is constant in towns and lower outside, which `pytest` checks.
+1. **Lots.**
+   - Words live in small hamlets ("lots") of 1–7 words. Lot centers are scattered by
+     Poisson-disk sampling (≥ 6 cells apart), and each lot's words sit within 3.4 cells of
+     its center. Inside a lot, words in nearby rows stay ≥ 3 columns apart so their name plates
+     fit.
+   - Lots are filled outward from the central plaza in order of a wobbly radius, `r_shape`: an
+     angular coast factor times medium-scale fbm noise (±12%). This makes the island and the
+     level bands organic rather than circular.
+   - Word quotas are exact per 5-cell ring: 0.07 words per land cell in towns (HSK 1–6) and
+     0.05 in the wilderness (HSK 7–9). So density is flat in towns and lower outside, which
+     `pytest` checks.
 2. **Force layout** on continuous coordinates. Each level keeps to its band (distance from the
    center follows HSK level). Topics start in angular sectors sized by word count. Words are
    pulled toward their anchor and semantic neighbors, and a short-range repulsion keeps the
    density even.
-3. **Regions.** Each level is split into balanced clusters of at most `REGION_CAP[level]` words:
-   30 for HSK 1, rising to 70 for HSK 6, and 160 for wilderness. That gives 137 regions: 10, 6,
-   13, 20, 27 and 26 towns, plus 35 wilds.
-4. **Assignment.** Capacity-constrained optimal transport (a power diagram) gives each region
-   exactly as many slots as it has words. The Hungarian algorithm then matches words to their
-   region's slots, preserving the layout.
+3. **Regions.** The lots of each level are grouped into compact regions of at most
+   `REGION_CAP[level]` words (aiming for 88% of it, since lots can't be split): 30 for HSK 1,
+   rising to 70 for HSK 6, and 120 for wilderness. That gives 172 regions: 12, 7, 15, 23, 31
+   and 30 towns, plus 54 wilds. Words join regions by capacity-constrained optimal transport
+   from their layout position.
+4. **Neighbors.** Inside a region, words are first matched to slots by layout position
+   (Hungarian algorithm), then improved by a quadratic-assignment local search: the best
+   pairwise swap is applied until none helps. The cost pulls related words close (sparse
+   affinity: embedding similarity, idf-weighted shared characters, "builds on" links, same
+   topic; each word keeps its 6 strongest), with a weak pull back toward the layout.
 5. **Cells.**
-   - Land is everything within the coast (`r_shape` plus small-scale jitter), plus a 2-cell
-     margin around every slot. Only the largest landmass is kept, and inland sea pockets are
-     filled.
-   - Each empty land cell joins a region by Gaussian-weighted membership (σ = 1.7) of nearby
-     words, rather than by nearest slot. This gives smooth borders instead of zig-zags.
-   - Exclaves and enclaves are repaired, so every region is one piece.
-6. **Terrain.**
+   - Land is everything within the coast (`r_shape` plus small-scale jitter), plus a margin
+     around every word. Only the largest landmass is kept, and inland sea pockets are filled.
+   - Each empty land cell joins a region by Gaussian-weighted membership (σ = 3.2) of nearby
+     words, which gives smooth borders. Exclaves and enclaves are repaired, so every region is
+     one piece.
+6. **Halls and roads.**
+   - Each region gets a hall near its middle, ≥ 3 cells from any word, on land.
+   - Roads are A* paths on the grid (water costs 6× and becomes a bridge; reusing a road is
+     cheap, so roads merge into networks). They link the plaza to the HSK 1 halls, each hall to
+     neighboring regions' halls (a spanning tree plus ~30% extra loops), and every lot to its
+     region's hall (a spanning tree per region). In the wilderness they are trails.
+7. **Terrain.**
    - In towns, each topic has a pair of grounds (e.g. orchard/meadow), mixed by fbm "detail"
-     noise. The topic itself is a smoothed (σ = 3) field of nearby words' topics, so terrain
-     varies smoothly but differs from town to town.
-   - Gaps between words are paved as plazas, and so is the start plaza.
+     noise. The topic itself is a smoothed field of nearby words' topics, so terrain varies
+     smoothly but differs from town to town. Ponds appear in open town land.
    - The wilderness uses elevation/moisture noise, biased per topic, to pick forest, hills,
-     marsh, dunes or red rock, peaks and snow. Its gaps become lakes or peaks.
-   - Sand lines the coast. Words never stand on water.
-7. **Names.** A town is named after a frequent concrete noun (preferring its dominant topic)
-   plus that topic's place suffix, e.g. 菜果园 *Vegetable Orchard*. Wilds use their dominant ground (林 forest, 谷
-   canyon, 沙丘 dunes, …). Duplicate names get a suffix (·二, ·三).
+     marsh, dunes or red rock, peaks and snow, with lakes in open land.
+   - Sand lines the coast. Words, halls and the plaza never stand on water.
+8. **Names.** A town is named after its most frequent concrete noun with a one-word gloss
+   (preferring its dominant topic) plus that topic's place suffix, e.g. 苹果果园 *Apple
+   Orchard*. Wilds use their dominant ground (林 forest, 谷 canyon, 沙丘 dunes, …). Duplicate
+   names get a suffix (·二, ·三).
 
 `world_stats` reports density by distance and mean distance by level. The build prints them,
-and `reports/zh-en.md` records them. `reports/zh-en-preview.png` and `zh-en-closeup.png` are
-for visual review.
+and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-preview.png` and
+`zh-en-closeup.png` are for visual review.
 
 ## Sentence selection
 - Up to 6 Tatoeba sentences per word, ranked by comprehensibility: the other words should be at
@@ -158,25 +180,31 @@ for visual review.
 - **Renderer** (`map/renderer.ts`): Canvas 2D, no game engine.
   - The terrain is rendered into an offscreen buffer for the visible area plus a margin.
     - Base ground is painted at 2 px per cell and upscaled with smoothing, so biomes blend.
-    - Then come per-cell details (grass tufts, trees, rocks, waves; hashed per cell so they
-      are stable).
-    - Then borders, traced with marching squares on the dual grid, so they run straight or at
-      45°: coast, thick borders between levels, and thin soft borders between same-level
-      regions.
-  - Words are drawn as **landmarks** by part of speech (`map/draw.ts`):
-    - house (noun), or hut in the wilds
-    - person (verb), elder (pronoun), tree (adjective), banner (adverb)
-    - tower (number/measure), signpost (function word), bell (interjection), tent (phrase)
-    - Color varies per word.
-  - State is shown by a pedestal, quest marks ("!" when due), stage pips and a ★ when learned.
-  - Name plates are placed in priority order with an occupancy grid to avoid overlap.
-- **Camera:** WASD/arrows walk at a constant speed, drag pans, and scroll/pinch/`+`/`−` zoom
-  within 0.55–1.6×.
-  - Flying to a word keeps it clear of the word panel.
-  - The camera position is saved per pack.
-  - `H` returns to the start plaza.
-- **Minimap** (bottom right): the current region's name, level, kind and progress bar, plus a
-  small overview with the viewport rectangle. Clicking it opens the world map.
+    - Roads, trails and bridges are stroked between neighboring road cells (2×2 blocks are
+      filled as small squares).
+    - Then come per-cell details (grass tufts, flowers, trees, rocks, waves; hashed per cell
+      so they are stable).
+    - Then borders, traced with marching squares on the dual grid: coast, thick borders
+      between levels, and thin soft borders between same-level regions.
+  - Words are written on **landmarks** (`map/landmarks.ts`) chosen from the ground under them
+    and a per-word hash: cottages, shops, domed houses, towers, barns and cabins in towns;
+    trees, pines, fruit and blossom trees, boulders, mountains, clouds, dunes, mesas, crystals,
+    lily pads and haystacks in the wilds. Colors vary per word.
+  - Halls are drawn as a flagged building with a name plate; the start plaza has a fountain.
+  - State is shown by quest marks ("!" when due), stage pips under the hanzi, a ★ when learned,
+    and a highlight ring on the landmark you're next to.
+  - Pinyin plates are placed in priority order with an occupancy grid to avoid overlap.
+- **Player** (`map/player.ts`, `logic/walk.ts`):
+  - WASD/arrows walk (Shift runs) with collision against landmarks, halls, water and the sea.
+  - Clicking or tapping walks there along an A* path; clicking a landmark walks up to it and
+    opens it. `N` walks to the next unexplored word nearby.
+  - `E`/Space interacts with the nearest landmark or hall in reach. The camera follows
+    the player; dragging pans away and `C` re-centers.
+  - The position is saved per pack. `H` and fast travel (search, world map) put the player in
+    front of the target.
+- **Minimap** (bottom right): the current region's name, level, kind and progress bar, a ⚑ Hall
+  button (takes you to the region's hall and opens it), plus a small overview with the viewport
+  rectangle. Clicking it opens the world map.
 - **World map** (`M`):
   - Every region filled by state: unexplored, explored, or learned. Discovered words show as
     white squares and learned ones as gold.
@@ -191,13 +219,30 @@ for visual review.
   - In *dim* fog every hidden landmark is drawn faded and clickable. In *hidden* fog only
     frontier "?" spots show.
   - The optional "fog scope: terrain" setting also darkens unexplored ground.
-- **Word panel:** meanings, quest stages (practice / mark done), example sentences, and an
-  "Explore" section:
+- **Word card** (`ui/WordPopover.tsx`): a small card at the bottom with one-tap choices
+  (keys `1`–`4`, `N` next):
+  - unexplored: 👁 Reveal (and speak) / ✓ Know it
+  - revealed: ⚔️ Learn / ✓ Know it / 💬 Example / 📖 Details
+  - on a quest: ▶ Practice (when due) / ✓ Know it / 💬 / 📖, with stage pips
+  - learned: 💬 / 📖
+
+  💬 Example cycles the word's sentences, with English on demand.
+- **Halls** (`ui/HallModal.tsx`, `logic/boss.ts`):
+  - The menu shows the region's level, progress and word list.
+  - ⚔️ Challenge: rounds of 8 of the region's unlearned words (easiest and most common first),
+    each a hanzi prompt (or audio in listening-only mode) with 4 English choices plus "Not
+    sure". Distractors come from the same region and level (same part of speech preferred) and
+    never share a sense with the answer or are its closest neighbors in meaning. A correct answer marks
+    the word known; a miss reveals it and shows its meaning and an example. The summary lists
+    cleared and missed words, and can start quests for the missed ones.
+  - 🏋️ Train: opens the region's due quests one after another, then returns to the hall.
+- **Word details** (📖): meanings, quest stages (practice / mark done), example sentences, and
+  an "Explore" section:
   - builds on / leads to
   - per-character links (open the character view)
   - similar meaning
 
-  On mobile it is a bottom sheet.
+  On mobile the card and details are bottom sheets.
 - **Quest:**
   - A modal per stage: listen or read, show the answer (hanzi, pinyin, English, highlighted
     word), then self-grade.
@@ -239,21 +284,28 @@ for visual review.
    - grid world with towns and wilderness, even density, smooth terrain and borders
    - landmarks, minimap, world map, character view
    - listening-only mode, dim fog by default, link lines removed
+8. ✅ **M7 Walkable world:**
+   - lower density: words in hamlets with open land, ponds, roads, trails and bridges
+   - better neighbors (quadratic-assignment swaps on meaning/character/anchor affinity)
+   - biome landmarks instead of part-of-speech icons
+   - player character (WASD, click/tap to walk, `E`, `N`)
+   - light word card; full details only on demand
+   - region halls with Challenge and Train
 
 ## Ideas / next
-- **Roads** between neighboring towns and a few bridges, so walking routes feel intentional.
-- **Better names:** avoid the "·二/·三" duplicate suffixes with a larger name vocabulary (second
-  noun, topic adjectives). Give wilderness regions proper place names.
-- **Landmark variety:** more axes per word (e.g. size by frequency, roof/clothing color by
-  topic, special landmarks for very common words or characters). Town centers or wells at
-  region label positions.
+- **Better names:** avoid the "·二/·三" duplicate suffixes and odd stems (e.g. "Wrong Plaza")
+  with a larger name vocabulary (second noun, topic adjectives). Give wilderness regions proper
+  place names.
+- **Landmark variety:** more axes per word (e.g. size by frequency, special landmarks for very
+  common words or characters), and NPC-like walkers in towns.
+- **Hall bosses with a story:** a named keeper per hall, a short sentence-based final round
+  (listen to or read a sentence, pick its meaning) once most of a town is learned, and a
+  stamp in a "passport" for clearing it.
 - **Minimap navigation:** click a spot on the minimap (not only the button) to walk or fly
   there. A "next due quest" compass arrow.
 - **Due pulse:** gently animate landmarks whose quests are due today.
-- **Region quests:** small rewards for finishing a town, e.g. revealing the next town's entrance
-  or a stamp in a "passport".
 - **Character decomposition** hints (Make Me a Hanzi). Pre-generated audio. Curated sentences
   for low-coverage words.
-- **Sprites:** swap the vector landmarks for a pixel-art tile set if one with a compatible
-  license fits.
+- **Sprites:** swap the vector landmarks and player for a pixel-art tile set if one with a
+  compatible license fits.
 - More language packs.

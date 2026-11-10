@@ -3,6 +3,7 @@ import { MapView } from './map/MapView'
 import { useStore } from './store'
 import { AboutModal } from './ui/AboutModal'
 import { CharModal } from './ui/CharModal'
+import { HallModal } from './ui/HallModal'
 import { Legend } from './ui/Legend'
 import { MapModal } from './ui/MapModal'
 import { QuestLog } from './ui/QuestLog'
@@ -12,6 +13,7 @@ import { Toasts } from './ui/Toasts'
 import { TopBar } from './ui/TopBar'
 import { WelcomeModal } from './ui/WelcomeModal'
 import { WordPanel } from './ui/WordPanel'
+import { WordPopover } from './ui/WordPopover'
 
 const PACK = 'zh-en'
 
@@ -24,6 +26,7 @@ export default function App() {
   const ready = useStore((s) => s.pack !== null && s.view !== null)
   const loadError = useStore((s) => s.loadError)
   const saveError = useStore((s) => s.saveError)
+  const popover = useStore((s) => s.selected !== null && !s.details)
 
   useEffect(() => {
     const { init, tick } = useStore.getState()
@@ -75,11 +78,13 @@ export default function App() {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key === 'Escape') {
         if (s.quest || s.modal) return
-        if (s.selected !== null) s.select(null)
+        if (s.hall !== null) s.closeHall()
+        else if (s.selected !== null && s.details) s.setDetails(false)
+        else if (s.selected !== null) s.select(null)
         else if (s.questLogOpen) s.setQuestLog(false)
         return
       }
-      if (s.quest || s.modal) return
+      if (s.quest || s.modal || s.hall !== null) return
       if (e.key === 'q' || e.key === 'Q') s.setQuestLog(!s.questLogOpen)
       else if (e.key === 'h' || e.key === 'H') s.flyHome()
       else if (e.key === 'm' || e.key === 'M') s.setModal('map')
@@ -109,12 +114,14 @@ export default function App() {
     )
   }
   return (
-    <div className="app">
+    <div className={popover ? 'app has-popover' : 'app'}>
       <MapView />
       <TopBar />
       <QuestLog />
       <WordPanel />
+      <WordPopover />
       <Legend />
+      <HallModal />
       <QuestModal />
       <WelcomeModal />
       <SettingsModal />

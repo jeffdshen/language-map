@@ -1,4 +1,5 @@
 import itertools
+from collections import deque
 
 import numpy as np
 import pytest
@@ -8,7 +9,17 @@ from scipy.spatial import cKDTree
 
 from langmap.themes import load_theme_config
 from langmap.words import Word
-from langmap.world import REGION_CAP, build_world, ot_assign, region_runs, world_stats
+from langmap.world import (
+    GAP_X,
+    GAP_Y,
+    REGION_CAP,
+    build_world,
+    ot_assign,
+    qap_cost,
+    qap_swap,
+    region_runs,
+    world_stats,
+)
 
 COUNTS = [60, 40, 90, 120, 180, 200, 480]
 
@@ -66,6 +77,71 @@ def test_words_never_touch(built):
     assert not cKDTree(w.pos).query_pairs(1.5, p=np.inf)
 
 
+def test_words_keep_room_for_name_plates(built):
+    _, w = built
+    for a, b in cKDTree(w.pos).query_pairs(max(GAP_X, GAP_Y) + 1, p=np.inf):
+        dx, dy = np.abs(w.pos[a] - w.pos[b])
+        assert dy >= GAP_Y or dx >= GAP_X, (w.pos[a], w.pos[b])
+
+
+def test_halls_inside_regions_and_clear(built):
+    _, w = built
+    assert len(w.halls) == len(w.regions)
+    occupied = {tuple(p) for p in w.pos.tolist()}
+    for r, (x, y) in zip(w.regions, w.halls.tolist()):
+        assert (r["x"], r["y"]) == (x, y)
+        assert w.region_grid[y - w.y0, x - w.x0] == r["id"]
+        assert w.ground[y - w.y0, x - w.x0] not in ("~", "=")
+        assert (x, y) not in occupied
+        d = np.abs(w.pos - [x, y]).max(axis=1).min()
+        assert d >= 2, f"hall {r['id']} is next to a word"
+
+
+def _walkable(w):
+    """Cells the player can stand on: land (bridges included), not words, halls or the
+    fountain at the spawn point."""
+    ok = ~np.isin(w.ground, ["~", "="])
+    ok[w.pos[:, 1] - w.y0, w.pos[:, 0] - w.x0] = False
+    ok[w.halls[:, 1] - w.y0, w.halls[:, 0] - w.x0] = False
+    ok[-w.y0, -w.x0] = False
+    return ok
+
+
+def test_every_word_and_hall_reachable_from_spawn(built):
+    _, w = built
+    ok = _walkable(w)
+    h, wd = ok.shape
+    seen = np.zeros_like(ok)
+    start = (-w.y0 + 2, -w.x0)
+    assert ok[start]
+    seen[start] = True
+    q = deque([start])
+    while q:
+        y, x = q.popleft()
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            v = (y + dy, x + dx)
+            if 0 <= v[0] < h and 0 <= v[1] < wd and ok[v] and not seen[v]:
+                seen[v] = True
+                q.append(v)
+    for x, y in np.concatenate([w.pos, w.halls]).tolist():
+        cy, cx = y - w.y0, x - w.x0
+        assert any(seen[cy + dy, cx + dx] for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1))), (
+            f"({x}, {y}) cannot be reached"
+        )
+
+
+def test_roads_lead_to_every_hall(built):
+    _, w = built
+    road = np.isin(w.ground, ["+", ",", "b", "p", "d"])
+    lab, _ = label(road, structure=np.ones((3, 3)))
+    plaza = lab[-w.y0 + 1, -w.x0]
+    assert plaza > 0
+    for x, y in w.halls.tolist():
+        cy, cx = y - w.y0, x - w.x0
+        around = lab[cy - 1 : cy + 2, cx - 1 : cx + 2]
+        assert (around == plaza).any(), f"hall at ({x}, {y}) is off the road network"
+
+
 def test_regions_capped_single_level_contiguous(built):
     words, w = built
     levels = np.array([x.level for x in words])
@@ -108,3 +184,17 @@ def test_ot_assign_is_optimal_and_exact():
     D = ((pts[:, None, :] - seeds[cols][None, :, :]) ** 2).sum(-1)
     r, c = linear_sum_assignment(D)
     assert cost == pytest.approx(D[r, c].sum())
+
+
+def test_qap_swap_never_worsens():
+    rng = np.random.default_rng(5)
+    m = 24
+    A = rng.uniform(0, 1, (m, m)) * (rng.uniform(0, 1, (m, m)) < 0.2)
+    A = np.triu(A, 1)
+    A = A + A.T
+    P = rng.uniform(0, 10, (m, 2))
+    G = np.sqrt(((P[:, None] - P[None]) ** 2).sum(-1))
+    perm0 = rng.permutation(m)
+    perm = qap_swap(A, G, np.zeros((m, m)), perm0, max_iter=200)
+    assert sorted(perm.tolist()) == list(range(m))
+    assert qap_cost(A, G, perm) < qap_cost(A, G, perm0)

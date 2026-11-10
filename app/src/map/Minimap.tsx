@@ -14,6 +14,8 @@ export function Minimap() {
   const view = useStore((s) => s.view!)
   const here = useStore((s) => s.here)
   const setModal = useStore((s) => s.setModal)
+  const flyToCell = useStore((s) => s.flyToCell)
+  const openHall = useStore((s) => s.openHall)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const image = useMemo(() => renderOverview(pack, view, { k: K, words: true }), [pack, view])
   const camRef = useRef<CameraInfo | null>(null)
@@ -49,6 +51,24 @@ export function Minimap() {
       g.arc(ox + (sx - b.x0 + 0.5) * K, oy + (sy - b.y0 + 0.5) * K, 3.5, 0, Math.PI * 2)
       g.fill()
       g.stroke()
+      // Halls.
+      g.fillStyle = '#3a2a1a'
+      for (const r of pack.world.regions) {
+        const hx = ox + (r.x - b.x0 + 0.5) * K
+        const hy = oy + (r.y - b.y0 + 0.5) * K
+        if (hx < -4 || hy < -4 || hx > W + 4 || hy > H + 4) continue
+        g.fillRect(hx - 2, hy - 2, 4, 4)
+      }
+      // The player.
+      if (cam.px !== undefined && cam.py !== undefined) {
+        g.beginPath()
+        g.arc(ox + (cam.px - b.x0 + 0.5) * K, oy + (cam.py - b.y0 + 0.5) * K, 4, 0, Math.PI * 2)
+        g.fillStyle = '#e04a3c'
+        g.fill()
+        g.lineWidth = 2
+        g.strokeStyle = '#ffffff'
+        g.stroke()
+      }
       const vw = cam.cols * K
       const vh = cam.rows * K
       g.lineWidth = 2
@@ -92,6 +112,17 @@ export function Minimap() {
           <div className="region-meta">
             ⭐ {learned}/{r.count} learned · 🧭 {seen} found
           </div>
+          <button
+            type="button"
+            className="small hall-btn"
+            title="Go to this region's hall: challenge and training"
+            onClick={() => {
+              flyToCell(r.x, r.y, true)
+              openHall(r.id)
+            }}
+          >
+            ⚑ Hall
+          </button>
         </div>
       ) : null}
       <button type="button" className="minimap-btn" onClick={() => setModal('map')} title="World map (M)" aria-label="Open the world map">

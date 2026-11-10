@@ -1,33 +1,40 @@
-"""The tile world: words on a grid, grouped into size-capped regions, plus terrain.
+"""The tile world: words on a grid, in walkable towns and wilds, with halls, roads and terrain.
 
 Steps (all deterministic):
 
-1. **Slots.** Words live on a brick lattice (every other cell of every other row,
-   alternate rows offset), so no two words touch and every word has room for its
-   label. Slots are taken outward from the center in order of a wavy "effective
-   radius" (an island, not a circle). Towns (HSK 1–6) keep ~92% of lattice slots
-   (the gaps become plazas and parks); the wilderness (HSK 7–9) keeps ~78% (the
-   gaps grow into lakes, peaks and clearings). Word density is therefore constant
-   in towns and *lower* in the wilderness: it never increases outward.
+1. **Lots.** Words live in small hamlets ("lots") of 1–7 words, scattered by
+   Poisson-disk sampling with open land between them. Lots are filled outward from
+   the central plaza in order of a wavy "effective radius" (an island, not a
+   circle). Each ring of the island holds exactly its quota of words, so density is
+   flat in the towns (HSK 1–6) and lower in the wilderness (HSK 7–9): it never
+   increases outward. Inside a lot, words keep room for their name plates: words in
+   nearby rows (|dy| < ``GAP_Y``) stay at least ``GAP_X`` columns apart.
 2. **Placement.** A force-directed layout on continuous coordinates: each level
    keeps to its band (distance from the center ~ HSK level), themes start in
-   angular sectors sized by their word count at that level, words are pulled
-   toward the lower-level word they build on and toward semantic neighbors, and a
-   short-range repulsion keeps the density even.
-3. **Regions.** Each level is split into balanced clusters of at most
-   ``REGION_CAP[level]`` words (towns; wilderness regions are bigger).
-4. **Assignment.** Regions get exactly as many slots as they have words by
-   capacity-constrained optimal transport (a power diagram), then words are
-   matched to their region's slots (Hungarian algorithm), preserving the layout.
-5. **Cells.** Land follows the same wobbly radius (plus small coast jitter and a
-   margin around every slot). Empty land cells join the region with the most
-   Gaussian-weighted word membership nearby, which keeps borders smooth; terrain
-   comes from smooth noise, the level, and the themes of nearby words.
+   angular sectors sized by their word count at that level, and words are pulled
+   toward the lower-level word they build on and toward semantic neighbors.
+3. **Regions.** The lots of each level are grouped into compact regions of at most
+   ``REGION_CAP[level]`` words (towns; wilderness regions are bigger). Words join
+   regions by capacity-constrained optimal transport from their layout position.
+4. **Neighbors.** Inside a region, words are first matched to slots by layout
+   position, then swapped (a quadratic-assignment local search) so that related
+   words share a lot: similar meaning, shared characters and "builds on" links pull
+   together.
+5. **Cells.** Land follows the same wobbly radius (plus coast noise and a margin
+   around every word). Empty land joins the region with the most Gaussian-weighted
+   word membership nearby, which keeps borders smooth.
+6. **Halls and roads.** Each region gets a hall (its training ground) near its
+   middle, clear of words. Roads link the plaza to the HSK 1 halls, each hall to the
+   halls of neighboring regions, and every lot to its region's network (A* on the
+   grid; water costs more and becomes a bridge).
+7. **Terrain.** Ground comes from the themes of nearby words (towns) or from
+   elevation and moisture noise (wilderness), with ponds, lakes and peaks in open land.
 """
 
 from __future__ import annotations
 
 import colorsys
+import heapq
 import itertools
 import math
 import re
@@ -35,33 +42,48 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import binary_dilation, distance_transform_edt, gaussian_filter
+from scipy.ndimage import label as cc_label
 from scipy.optimize import linear_sum_assignment
+from scipy.sparse.csgraph import minimum_spanning_tree
 from scipy.spatial import cKDTree
+from scipy.stats import qmc
 
 from .words import Word, pos_category
 
-LAYOUT_VERSION = 2
+LAYOUT_VERSION = 3
 SEED = 2026
 WILD_LEVEL = 7
-SLOT_KEEP = {"town": 0.92, "wild": 0.78}
-REGION_CAP = {1: 30, 2: 34, 3: 40, 4: 50, 5: 60, 6: 70, 7: 160}
-PLAZA_RADIUS = 2.6  # empty central plaza (the spawn point)
-SOFT_REGION_SIGMA = 1.7  # smoothing of region borders between words
-COAST_JITTER = 2.0  # cells the coast wanders in and out (small-scale)
+DENSITY = {"town": 0.07, "wild": 0.05}  # words per land cell
+REGION_CAP = {1: 30, 2: 34, 3: 40, 4: 50, 5: 60, 6: 70, 7: 120}
+REGION_FILL = 0.88  # regions aim for this share of their cap (lots are not divisible)
+PLAZA_RADIUS = 4.0  # empty central plaza (the spawn point)
+LOT_SPACING = 6.0  # minimum distance between lot centers (cells)
+LOT_RADIUS = 3.4  # words of a lot sit within this distance of its center
+LOT_MAX = 7
+RING_WIDTH = 5.0  # word quotas are exact per ring of this width (effective radius)
+GAP_X, GAP_Y = 3, 2  # words in nearby rows (|dy| < GAP_Y) stay >= GAP_X columns apart
+SOFT_REGION_SIGMA = 3.2  # smoothing of region borders between words
+COAST_JITTER = 3.0  # cells the coast wanders in and out (small-scale)
 SHAPE_WOBBLE = 0.12  # medium-scale wobble of level bands and coast, relative to radius
-SHAPE_SCALE = 26.0  # cells
-RING_WIDTH = 2.0  # slot quotas are exact per ring of this width (effective radius)
-REPULSE = 2.0  # spacing the force layout aims for, in cells (lattice spacing is 2)
-BAND_SLACK = 1.5  # how far (cells) a word may stray outside its level band during layout
+SHAPE_SCALE = 40.0  # cells
+REPULSE = 3.2  # spacing the force layout aims for, in cells
+BAND_SLACK = 2.5  # how far (cells) a word may stray outside its level band during layout
 FORCE_ITERS = 160
+HALL_CLEAR = 3.0  # halls keep at least this distance from words
+LAYOUT_PULL = 0.12  # weight of the layout position against neighbor affinity (step 4)
+AFFINITY_K = 6  # strongest relations kept per word in step 4
+MIN_WATER = 6  # smallest lake/pond kept (cells)
 
-# Ground codes. Words only stand on land; '=' and 'k' are used only in empty cells.
+# Ground codes. Words, halls and the plaza never stand on water ('~', '=').
 GROUND = {
     "~": ("ocean", "#3f6f9e"),
     "=": ("lake", "#5d93c2"),
     ".": ("sand", "#e8d9a8"),
     "p": ("plaza", "#d9d2c3"),
+    "+": ("road", "#d9c59c"),
+    ",": ("trail", "#c9b189"),
+    "b": ("bridge", "#a87c52"),
     "g": ("grass", "#a8cf87"),
     "m": ("meadow", "#bfd98f"),
     "w": ("fields", "#e3d58e"),
@@ -76,6 +98,7 @@ GROUND = {
     "x": ("marsh", "#8fb79a"),
     "y": ("dunes", "#e6cc8f"),
 }
+WATER = ("~", "=")
 
 # Wilderness naming by dominant ground.
 WILD_PLACE = {
@@ -162,66 +185,118 @@ def r_shape(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# slots
+# lots and slots
 
 
 @dataclass
 class Slots:
-    xy: np.ndarray  # (N, 2) int cell coordinates, sorted outward
+    xy: np.ndarray  # (N, 2) int cells in fill order (outward); each level is a contiguous run
+    lot: np.ndarray  # (N,) lot of each slot
+    lots: np.ndarray  # (M, 2) lot centers
     wild: np.ndarray  # (N,) bool
     bands: np.ndarray  # (8,) effective radius of each level boundary (bands[0] = plaza)
 
 
-def is_lattice(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    return (np.mod(y, 2) == 0) & (np.mod(x + np.floor_divide(y, 2), 2) == 0)
+def gap_free(occ: np.ndarray, x: int, y: int) -> bool:
+    """True if a word may stand at array cell (x, y) next to the occupied cells: words in
+    nearby rows keep GAP_X columns apart so their name plates never collide."""
+    return not occ[y - GAP_Y + 1 : y + GAP_Y, x - GAP_X + 1 : x + GAP_X].any()
+
+
+def _lot_offsets() -> np.ndarray:
+    r = math.ceil(LOT_RADIUS) + 1
+    ys, xs = np.mgrid[-r : r + 1, -r : r + 1]
+    return np.stack([xs.ravel(), ys.ravel()], axis=1)
+
+
+def _fill_lot(
+    center: np.ndarray, c: int, occ: np.ndarray, offs: np.ndarray, R: int
+) -> list[tuple[int, int]]:
+    """Up to c free cells around a lot center, nearest first (with a little jitter so lots
+    take varied shapes)."""
+    cells = np.round(center).astype(np.int64) + offs
+    d = np.hypot(cells[:, 0] - center[0], cells[:, 1] - center[1])
+    ok = d <= LOT_RADIUS
+    cells = cells[ok]
+    key = d[ok] + 0.9 * _hash01(cells[:, 0], cells[:, 1], SEED + 4)
+    cells = cells[np.lexsort((cells[:, 0], cells[:, 1], key))]
+    rr = r_shape(cells[:, 0], cells[:, 1])
+    out: list[tuple[int, int]] = []
+    for (x, y), r in zip(cells.tolist(), rr.tolist()):
+        if r < PLAZA_RADIUS:
+            continue
+        if gap_free(occ, x + R, y + R):
+            occ[y + R, x + R] = True
+            out.append((x, y))
+            if len(out) == c:
+                break
+    return out
 
 
 def make_slots(level_counts: list[int]) -> Slots:
-    n_town = sum(level_counts[: WILD_LEVEL - 1])
     n = sum(level_counts)
-    n_wild = n - n_town
-    area = n_town * 4 / SLOT_KEEP["town"] + n_wild * 4 / SLOT_KEEP["wild"]
-    R = int(math.sqrt(area / math.pi) * 1.7) + 10
+    n_town = sum(level_counts[: WILD_LEVEL - 1])
+    area = n_town / DENSITY["town"] + (n - n_town) / DENSITY["wild"]
+    R = int(math.sqrt(area / math.pi) * 1.45) + 12
+    side = 2.0 * R
+    rng = np.random.default_rng(SEED)
+    lots = qmc.PoissonDisk(d=2, radius=LOT_SPACING / side, seed=rng).fill_space() * side - R
+    lr = r_shape(lots[:, 0], lots[:, 1])
+    keep = lr >= PLAZA_RADIUS + 1.0
+    lots, lr = lots[keep], lr[keep]
+    order = np.lexsort((lots[:, 0], lots[:, 1], lr))
+    lots, lr = lots[order], lr[order]
+    # Lots hold more or fewer words (weights 0.5–1.5), so some hamlets are busier.
+    weight = 0.5 + _hash01(np.arange(len(lots)), np.zeros(len(lots), np.int64), SEED + 3)
     ys, xs = np.mgrid[-R : R + 1, -R : R + 1]
-    xs, ys = xs.ravel(), ys.ravel()
-    lat = is_lattice(xs, ys)
-    xs, ys = xs[lat], ys[lat]
-    re_ = r_shape(xs, ys)
-    order = np.lexsort((xs, ys, re_))
-    u_town = rank01(value_noise(xs, ys, 3.0, SEED + 1))
-    u_wild = rank01(fbm(xs, ys, 8.0, SEED + 2))
-    # Rings of equal width: each keeps exactly its quota (error-diffused), choosing which
-    # slots to drop by noise, so density is flat in towns and lower (never higher) outside.
-    ring = np.floor(re_ / RING_WIDTH).astype(np.int64)
-    kept: list[int] = []
-    wild: list[bool] = []
+    rc = r_shape(xs, ys)
+    nring = int(lr.max() / RING_WIDTH) + 1
+    inner = rc >= PLAZA_RADIUS
+    ring_area = np.bincount(
+        np.minimum(np.floor(rc[inner] / RING_WIDTH).astype(np.int64), nring), minlength=nring + 1
+    )
+    lot_ring = np.floor(lr / RING_WIDTH).astype(np.int64)
+    offs = _lot_offsets()
+    occ = np.zeros((2 * R + 1, 2 * R + 1), dtype=bool)
+    level_end = np.cumsum(level_counts)
+    xy: list[tuple[int, int]] = []
+    lot_of: list[int] = []
+    used: list[int] = []
     carry = 0.0
-    for rg in range(int(ring.max()) + 1):
-        if len(kept) >= n:
+    # Each ring gets exactly its quota (error-diffused across lots and rings).
+    for g in range(nring):
+        if len(xy) >= n:
             break
-        members = order[(ring[order] == rg) & (re_[order] >= PLAZA_RADIUS)]
+        members = np.where(lot_ring == g)[0]
+        zone = "wild" if len(xy) >= n_town else "town"
         if not len(members):
+            carry += DENSITY[zone] * ring_area[g]
             continue
-        is_wild = len(kept) >= n_town
-        u = (u_wild if is_wild else u_town)[members]
-        want = SLOT_KEEP["wild" if is_wild else "town"] * len(members) + carry
-        take = round(want)
-        carry = want - take
-        chosen = members[np.lexsort((members, -u))[:take]]
-        chosen = chosen[np.lexsort((xs[chosen], ys[chosen], re_[chosen]))]
-        room = n - len(kept)
-        kept += chosen[:room].tolist()
-        wild += [is_wild] * min(room, len(chosen))
-    if len(kept) < n:
-        raise RuntimeError("slot lattice too small")
-    xy = np.stack([xs[kept], ys[kept]], axis=1).astype(np.int64)
-    # The candidate square must contain every used ring whole, or the coast gets cut flat.
-    if int(np.abs(xy).max()) >= R - 2:
-        raise RuntimeError("slot lattice clipped; enlarge R")
-    rk = re_[kept]
-    cum = np.cumsum(level_counts)
-    bands = np.array([PLAZA_RADIUS] + [float(rk[c - 1]) for c in cum])
-    return Slots(xy=xy, wild=np.array(wild), bands=bands)
+        share = ring_area[g] * weight[members] / weight[members].sum()
+        for li, a in zip(members.tolist(), share.tolist()):
+            placed = len(xy)
+            if placed >= n:
+                break
+            zone = "wild" if placed >= n_town else "town"
+            want = DENSITY[zone] * a + carry
+            end = int(level_end[np.searchsorted(level_end, placed, side="right")])
+            c = min(int(np.clip(round(want), 0, LOT_MAX)), end - placed)
+            got = _fill_lot(lots[li], c, occ, offs, R) if c > 0 else []
+            if got:
+                xy += got
+                lot_of += [len(used)] * len(got)
+                used.append(li)
+            carry = want - len(got)
+    if len(xy) < n:
+        raise RuntimeError("island too small for all words; enlarge R")
+    xy_a = np.array(xy, dtype=np.int64)
+    if int(np.abs(xy_a).max()) >= R - 6:
+        raise RuntimeError("lots clipped by the candidate square; enlarge R")
+    lot_a = np.array(lot_of, dtype=np.int64)
+    used_lots = lots[used]
+    used_r = lr[used]
+    bands = np.array([PLAZA_RADIUS] + [float(used_r[lot_a[e - 1]]) for e in level_end])
+    return Slots(xy=xy_a, lot=lot_a, lots=used_lots, wild=np.arange(n) >= n_town, bands=bands)
 
 
 # ---------------------------------------------------------------------------
@@ -433,24 +508,155 @@ def force_layout(
 # regions
 
 
-def cluster_level(P: np.ndarray, k: int, iters: int = 6) -> np.ndarray:
-    """Balanced spatial clusters (sizes differ by at most one)."""
-    n = len(P)
-    if k == 1:
-        return np.zeros(n, dtype=np.int64)
+def _majority(owner: np.ndarray, lab: np.ndarray, m: int, k: int) -> np.ndarray:
+    counts = np.zeros((m, k))
+    np.add.at(counts, (owner, lab), 1.0)
+    return np.argmax(counts, axis=1)
+
+
+def cluster_lots(P: np.ndarray, wts: np.ndarray, k: int, iters: int = 8) -> np.ndarray:
+    """Group lots into k compact clusters holding about the same number of words: balanced
+    clustering of the words (each lot repeated by its size), then each lot goes whole to the
+    cluster holding most of its words."""
+    m = len(P)
+    if k <= 1:
+        return np.zeros(m, dtype=np.int64)
+    pts = np.repeat(P, wts, axis=0)
+    owner = np.repeat(np.arange(m), wts)
+    n = len(pts)
     base, extra = divmod(n, k)
     caps = np.array([base + (1 if c < extra else 0) for c in range(k)])
-    theta = np.mod(np.arctan2(P[:, 1], P[:, 0]) + math.pi / 2, 2 * math.pi)
-    order = np.lexsort((np.arange(n), theta))
-    label = np.zeros(n, dtype=np.int64)
-    label[order] = np.repeat(np.arange(k), caps)
+    theta = np.mod(np.arctan2(pts[:, 1], pts[:, 0]) + math.pi / 2, 2 * math.pi)
+    lab = np.zeros(n, dtype=np.int64)
+    lab[np.lexsort((owner, theta))] = np.repeat(np.arange(k), caps)
     for _ in range(iters):
-        seeds = np.stack([P[label == c].mean(axis=0) for c in range(k)])
-        new = ot_assign(P, seeds, caps)
-        if np.array_equal(new, label):
+        seeds = np.stack([pts[lab == c].mean(axis=0) for c in range(k)])
+        new = ot_assign(pts, seeds, caps)
+        if np.array_equal(new, lab):
             break
-        label = new
-    return label
+        lab = new
+    return _majority(owner, lab, m, k)
+
+
+def _region_lots(slots: Slots, counts: list[int]) -> tuple[np.ndarray, list[int]]:
+    """Region id per lot (regions ordered by level, then clockwise from the top)."""
+    lot_region = np.full(len(slots.lots), -1, dtype=np.int64)
+    sizes = np.bincount(slots.lot, minlength=len(slots.lots))
+    lot_level = np.zeros(len(slots.lots), dtype=np.int64)
+    cum = np.concatenate([[0], np.cumsum(counts)])
+    for L in range(1, 8):
+        lot_level[slots.lot[cum[L - 1] : cum[L]]] = L
+    reg_level: list[int] = []
+    for L in range(1, 8):
+        li = np.where(lot_level == L)[0]
+        if not len(li):
+            continue
+        cap = REGION_CAP[L]
+        k = math.ceil(counts[L - 1] / (cap * REGION_FILL))
+        while True:
+            lab = cluster_lots(slots.lots[li], sizes[li], k)
+            tot = np.bincount(lab, weights=sizes[li], minlength=k)
+            if tot.max() <= cap and tot.min() > 0:
+                break
+            k += 1
+        cents = np.stack(
+            [
+                np.average(slots.lots[li][lab == c], axis=0, weights=sizes[li][lab == c])
+                for c in range(k)
+            ]
+        )
+        ang = np.mod(np.arctan2(cents[:, 1], cents[:, 0]) + math.pi / 2, 2 * math.pi)
+        rank = np.argsort(np.argsort(ang, kind="stable"), kind="stable")
+        lot_region[li] = len(reg_level) + rank[lab]
+        reg_level += [L] * k
+    return lot_region, reg_level
+
+
+# ---------------------------------------------------------------------------
+# neighbors inside a region
+
+
+def _affinity(
+    idx: np.ndarray, words: list[Word], emb: np.ndarray, anchor, theme, idf
+) -> np.ndarray:
+    """Symmetric relation strength between the words of one region (sparse: each word keeps
+    its AFFINITY_K strongest relations)."""
+    m = len(idx)
+    E = emb[idx].astype(np.float64)
+    E /= np.maximum(np.linalg.norm(E, axis=1, keepdims=True), 1e-9)
+    A = np.clip((E @ E.T - 0.3) / 0.7, 0.0, None) ** 1.5
+    chars = [set(words[i].chars) for i in idx.tolist()]
+    weight = [sum(idf.get(c, 1.0) for c in s) or 1.0 for s in chars]
+    for a in range(m):
+        if not chars[a]:
+            continue
+        for b in range(a + 1, m):
+            shared = chars[a] & chars[b]
+            if shared:
+                s = sum(idf.get(c, 1.0) for c in shared) / min(weight[a], weight[b])
+                A[a, b] += 1.2 * s
+                A[b, a] += 1.2 * s
+    where = {int(i): k for k, i in enumerate(idx.tolist())}
+    for k, i in enumerate(idx.tolist()):
+        j = where.get(int(anchor[i]))
+        if j is not None:
+            A[k, j] += 1.0
+            A[j, k] += 1.0
+    A += 0.1 * (theme[idx][:, None] == theme[idx][None, :])
+    np.fill_diagonal(A, 0.0)
+    if m > AFFINITY_K + 1:
+        cut = -np.sort(-A, axis=1)[:, AFFINITY_K - 1 : AFFINITY_K]
+        A = np.where(A >= cut, A, 0.0)
+        A = np.maximum(A, A.T)
+    return A
+
+
+def qap_swap(
+    A: np.ndarray, G: np.ndarray, L: np.ndarray, perm: np.ndarray, max_iter: int
+) -> np.ndarray:
+    """Local search for a quadratic assignment: word i sits at slot perm[i]; minimize
+    sum_{i<j} A_ij G_{perm i, perm j} + sum_i L_{i, perm i} by repeatedly applying the best
+    improving swap of two words."""
+    perm = perm.copy()
+    m = len(perm)
+    if m < 3:
+        return perm
+    for _ in range(max_iter):
+        Gp = G[np.ix_(perm, perm)]
+        Lp = L[:, perm]
+        M = A @ Gp
+        dM, dL = np.diag(M), np.diag(Lp)
+        D = M + M.T - dM[:, None] - dM[None, :] + 2.0 * A * Gp
+        D += Lp + Lp.T - dL[:, None] - dL[None, :]
+        np.fill_diagonal(D, np.inf)
+        k = int(np.argmin(D))
+        a, b = divmod(k, m)
+        if D[a, b] >= -1e-9:
+            break
+        perm[[a, b]] = perm[[b, a]]
+    return perm
+
+
+def qap_cost(A: np.ndarray, G: np.ndarray, perm: np.ndarray) -> float:
+    return float(0.5 * (A * G[np.ix_(perm, perm)]).sum())
+
+
+def _place_region(wi, si, X, slots: Slots, words, emb, anchor, theme, idf) -> np.ndarray:
+    """Slot (index into slots) for each word in wi."""
+    S = slots.xy[si].astype(np.float64)
+    W = X[wi] - X[wi].mean(axis=0) + S.mean(axis=0)
+    sq = ((W[:, None, :] - S[None, :, :]) ** 2).sum(-1)
+    rows, cols = linear_sum_assignment(sq)
+    perm = cols[np.argsort(rows)]
+    A = _affinity(wi, words, emb, anchor, theme, idf)
+    G = np.sqrt(((S[:, None, :] - S[None, :, :]) ** 2).sum(-1))
+    pull = LAYOUT_PULL * max(float(A.sum(axis=1).mean()), 1e-6)
+    perm = qap_swap(A, G, pull * np.sqrt(sq), perm, max_iter=4 * len(wi))
+    return si[perm]
+
+
+# ---------------------------------------------------------------------------
+# world
 
 
 @dataclass
@@ -462,6 +668,8 @@ class World:
     y0: int
     ground: np.ndarray  # (h, w) '<U1'
     region_grid: np.ndarray  # (h, w) int, -1 = sea
+    halls: np.ndarray  # (R, 2) int hall cell per region
+    lot: np.ndarray  # (n,) lot per word (-1 if moved out of its lot)
     stats: dict = field(default_factory=dict)
 
     @property
@@ -485,102 +693,115 @@ def build_world(
     slots = make_slots(counts)
     X = force_layout(words, emb, theme, anchor, neighbors, k, slots.bands)
 
-    # Regions per level, ordered by level then clockwise from the top.
-    region = np.full(n, -1, dtype=np.int64)
-    reg_level: list[int] = []
-    for L in range(1, 8):
-        idx = np.where(levels == L)[0]
-        kL = math.ceil(len(idx) / REGION_CAP[L])
-        lab = cluster_level(X[idx], kL)
-        cents = np.stack([X[idx][lab == c].mean(axis=0) for c in range(kL)])
-        ang = np.mod(np.arctan2(cents[:, 1], cents[:, 0]) + math.pi / 2, 2 * math.pi)
-        rank = np.argsort(np.argsort(ang, kind="stable"), kind="stable")
-        region[idx] = len(reg_level) + rank[lab]
-        reg_level += [L] * kL
+    # Lots -> regions, then words -> regions (OT from layout positions), then words -> slots.
+    lot_region, reg_level = _region_lots(slots, counts)
     R = len(reg_level)
-    caps = np.bincount(region, minlength=R)
-    seeds = np.stack([X[region == r].mean(axis=0) for r in range(R)])
-
-    # Regions -> slots (each level fills exactly its own band of slots), then words ->
-    # slots within each region.
-    slot_reg = np.full(len(slots.xy), -1, dtype=np.int64)
-    cum = np.concatenate([[0], np.cumsum(counts)])
+    slot_reg = lot_region[slots.lot]
+    caps = np.bincount(slot_reg, minlength=R)
+    seeds = np.stack([slots.xy[slot_reg == r].mean(axis=0) for r in range(R)])
+    region = np.full(n, -1, dtype=np.int64)
     reg_lv = np.array(reg_level)
     for L in range(1, 8):
+        idx = np.where(levels == L)[0]
         rs = np.where(reg_lv == L)[0]
-        sl = slice(int(cum[L - 1]), int(cum[L]))
-        lab = ot_assign(slots.xy[sl].astype(np.float64), seeds[rs], caps[rs])
-        slot_reg[sl] = rs[lab]
+        region[idx] = rs[ot_assign(X[idx], seeds[rs], caps[rs])]
+    char_count: Counter[str] = Counter(c for w in words for c in w.chars)
+    idf = {c: math.log(n / v) + 1.0 for c, v in char_count.items()}
     pos = np.zeros((n, 2), dtype=np.int64)
+    word_lot = np.zeros(n, dtype=np.int64)
     for r in range(R):
         wi = np.where(region == r)[0]
         si = np.where(slot_reg == r)[0]
-        S = slots.xy[si].astype(np.float64)
-        W = X[wi] - X[wi].mean(axis=0) + S.mean(axis=0)
-        cost = ((W[:, None, :] - S[None, :, :]) ** 2).sum(-1)
-        rows, cols = linear_sum_assignment(cost)
-        pos[wi[rows]] = slots.xy[si[cols]]
+        chosen = _place_region(wi, si, X, slots, words, emb, anchor, theme, idf)
+        pos[wi] = slots.xy[chosen]
+        word_lot[wi] = slots.lot[chosen]
 
     # Cells.
     slot_r = r_shape(slots.xy[:, 0], slots.xy[:, 1])
-    land_r = float(slot_r.max()) + 1.6
-    ext = int(np.abs(slots.xy).max()) + 8
+    land_r = float(slot_r.max()) + 2.5
+    ext = int(np.abs(slots.xy).max()) + 12
     x0 = y0 = -ext
     gy, gx = np.mgrid[-ext : ext + 1, -ext : ext + 1]
     fgx, fgy = gx.astype(np.float64), gy.astype(np.float64)
     # Coast: the wobbly outer ring plus small-scale noise (bays and capes), always keeping
     # a margin of land around every word.
-    jitter = (fbm(fgx, fgy, 11.0, SEED + 9) - 0.5) * 2 * COAST_JITTER
+    jitter = (fbm(fgx, fgy, 14.0, SEED + 9) - 0.5) * 2 * COAST_JITTER
     land = r_shape(fgx, fgy) <= land_r + jitter
     near_slot = np.zeros(gx.shape, dtype=bool)
     near_slot[slots.xy[:, 1] + ext, slots.xy[:, 0] + ext] = True
-    from scipy.ndimage import binary_dilation
-
-    land |= binary_dilation(near_slot, structure=np.ones((3, 3), dtype=bool), iterations=2)
+    land |= binary_dilation(near_slot, structure=np.ones((3, 3), dtype=bool), iterations=3)
     land = _largest_land(land)
-    word_at = {(int(x), int(y)): i for i, (x, y) in enumerate(pos.tolist())}
+    assert land[slots.xy[:, 1] + ext, slots.xy[:, 0] + ext].all(), "a word is off the island"
     for _ in range(6):
         region_grid, word_dist = _rasterize(pos, region, land, gx, gy, x0, y0)
-        if not _fix_exclaves(pos, region, region_grid, land, x0, y0):
+        if not _fix_exclaves(pos, region, word_lot, region_grid, land, x0, y0):
             break
     else:
         region_grid, word_dist = _rasterize(pos, region, land, gx, gy, x0, y0)
+    assert len({(int(x), int(y)) for x, y in pos.tolist()}) == n, "two words on one cell"
 
-    ground = _terrain(
-        gx,
-        gy,
+    sea_dist = distance_transform_edt(land)
+    rr = r_eff(fgx, fgy)
+    level_grid = np.zeros(gx.shape, dtype=np.int64)
+    level_grid[land] = reg_lv[region_grid[land]]
+    wild = level_grid == WILD_LEVEL
+    fields = _fields(fgx, fgy)
+    halls = _place_halls(region_grid, word_dist, sea_dist, rr, pos, region, R, x0, y0)
+    hall_dist = _dist_to(halls, gx.shape)
+    water = _water(land, wild, word_dist, sea_dist, hall_dist, rr, fields)
+    word_cells = np.zeros(gx.shape, dtype=bool)
+    word_cells[pos[:, 1] - y0, pos[:, 0] - x0] = True
+    road = _roads(
         land,
+        water,
+        word_cells,
+        region_grid,
+        halls,
+        pos - [x0, y0],
+        region,
+        word_lot,
+        reg_level,
+        (-x0, -y0),
+    )
+    ground = _terrain(
+        land,
+        wild,
         region_grid,
         word_dist,
-        land_mask_dist(land),
-        pos,
-        x0,
-        y0,
+        sea_dist,
+        hall_dist,
+        rr,
+        water,
+        road,
+        word_cells,
+        pos - [x0, y0],
         theme,
-        reg_level,
         themes_cfg,
         k,
+        fields,
     )
+    halls_world = halls + [x0, y0]
     regions = _describe_regions(
-        words, region, reg_level, pos, theme, themes_cfg, ground, region_grid, x0, y0
+        words, region, reg_level, theme, themes_cfg, ground, region_grid, halls_world
     )
     stats = {
         "regions": R,
+        "lots": len(np.unique(word_lot[word_lot >= 0])),
         "grid": [int(gx.shape[1]), int(gx.shape[0])],
         "land_cells": int(land.sum()),
+        "road_cells": int(road.sum()),
         "band_radii": [round(float(b), 2) for b in slots.bands],
         "region_sizes": {
             str(L): [int(caps[r]) for r in range(R) if reg_level[r] == L] for L in range(1, 8)
         },
     }
-    assert len(word_at) == n, "two words on one cell"
-    return World(pos, region, regions, x0, y0, ground, region_grid, stats)
+    return World(pos, region, regions, x0, y0, ground, region_grid, halls_world, word_lot, stats)
 
 
 def _rasterize(pos, region, land, gx, gy, x0, y0) -> tuple[np.ndarray, np.ndarray]:
     """Each land cell joins the region with the most (Gaussian-weighted) words around it,
-    which gives smoother borders than plain nearest-word cells on the brick lattice. Word
-    cells keep their own region; cells far from every word fall back to the nearest word.
+    which gives smooth borders through the open land between lots. Word cells keep their
+    own region; cells far from every word fall back to the nearest word.
     Returns (region grid, distance to the nearest word)."""
     cells = np.stack([gx[land], gy[land]], axis=1).astype(np.float64)
     dist, near = cKDTree(pos.astype(np.float64)).query(cells, k=1)
@@ -590,13 +811,18 @@ def _rasterize(pos, region, land, gx, gy, x0, y0) -> tuple[np.ndarray, np.ndarra
     best = np.zeros(gx.shape)
     arg = np.full(gx.shape, -1, dtype=np.int64)
     for r in range(int(region.max()) + 1):
-        ind = np.zeros(gx.shape)
         sel = region == r
-        ind[py[sel], px[sel]] = 1.0
+        ys, xs = py[sel], px[sel]
+        pad = int(SOFT_REGION_SIGMA * 3) + 2
+        ya, yb = max(ys.min() - pad, 0), min(ys.max() + pad + 1, gx.shape[0])
+        xa, xb = max(xs.min() - pad, 0), min(xs.max() + pad + 1, gx.shape[1])
+        ind = np.zeros((yb - ya, xb - xa))
+        ind[ys - ya, xs - xa] = 1.0
         f = gaussian_filter(ind, sigma=SOFT_REGION_SIGMA, mode="constant", truncate=3.0)
-        upd = f > best + 1e-9
-        best[upd] = f[upd]
-        arg[upd] = r
+        sub_best = best[ya:yb, xa:xb]
+        upd = f > sub_best + 1e-9
+        sub_best[upd] = f[upd]
+        arg[ya:yb, xa:xb][upd] = r
     soft = land & (arg >= 0) & (best > 1e-4)
     region_grid[soft] = arg[soft]
     region_grid[py, px] = region
@@ -606,13 +832,10 @@ def _rasterize(pos, region, land, gx, gy, x0, y0) -> tuple[np.ndarray, np.ndarra
     return region_grid, word_dist
 
 
-def _fix_exclaves(pos, region, region_grid, land, x0, y0) -> bool:
+def _fix_exclaves(pos, region, word_lot, region_grid, land, x0, y0) -> bool:
     """Words stranded in a detached piece of their region swap places with a word of the
     surrounding region that sits next to the main piece (or, failing that, move to a free
-    lattice slot next to it). Returns True if anything moved."""
-    from scipy.ndimage import binary_dilation
-    from scipy.ndimage import label as cc_label
-
+    cell next to it). Returns True if anything moved."""
     px, py = pos[:, 0] - x0, pos[:, 1] - y0
     moved = False
     for r in range(int(region_grid.max()) + 1):
@@ -634,43 +857,48 @@ def _fix_exclaves(pos, region, region_grid, land, x0, y0) -> bool:
             if cand:
                 j = min(cand, key=lambda j: (float(np.sum((pos[j] - pos[i]) ** 2)), j))
                 pos[[i, j]] = pos[[j, i]]
+                word_lot[[i, j]] = word_lot[[j, i]]
+                px[[i, j]] = px[[j, i]]
+                py[[i, j]] = py[[j, i]]
                 taken.add(j)
                 moved = True
                 continue
-            h, w = region_grid.shape
-            fy, fx = np.mgrid[0:h, 0:w]
-            free = near_main & land & is_lattice(fx + x0, fy + y0) & (region_grid == r)
-            free[py, px] = False
-            fys, fxs = np.nonzero(free)
-            if len(fys):
-                k = int(np.argmin((fxs - px[i]) ** 2 + (fys - py[i]) ** 2))
-                pos[i] = (fxs[k] + x0, fys[k] + y0)
-                px[i], py[i] = fxs[k], fys[k]
-                moved = True
+            occ = np.zeros(region_grid.shape, dtype=bool)
+            occ[py, px] = True
+            occ[py[i], px[i]] = False
+            fys, fxs = np.nonzero(near_main & land & (region_grid == r))
+            order = np.argsort((fxs - px[i]) ** 2 + (fys - py[i]) ** 2, kind="stable")
+            for q in order.tolist():
+                fx_, fy_ = int(fxs[q]), int(fys[q])
+                if (
+                    2 <= fx_ < occ.shape[1] - 3
+                    and 1 <= fy_ < occ.shape[0] - 2
+                    and gap_free(occ, fx_, fy_)
+                ):
+                    pos[i] = (fx_ + x0, fy_ + y0)
+                    px[i], py[i] = fx_, fy_
+                    word_lot[i] = -1
+                    moved = True
+                    break
     return moved
 
 
 def _largest_land(land: np.ndarray) -> np.ndarray:
-    """Fill lakes of sea inside the island so only the outer ocean is sea."""
-    from scipy.ndimage import label as cc_label
-
+    """One island: fill pockets of sea inside it and drop detached islets."""
     sea, _ = cc_label(~land)
     outer = set(np.unique(np.concatenate([sea[0], sea[-1], sea[:, 0], sea[:, -1]])).tolist())
     outer.discard(0)
-    return ~np.isin(sea, list(outer))
-
-
-def land_mask_dist(land: np.ndarray) -> np.ndarray:
-    """Distance (cells) from each land cell to the sea (capped)."""
-    from scipy.ndimage import distance_transform_edt
-
-    return distance_transform_edt(land)
+    land = ~np.isin(sea, list(outer))
+    lab, m = cc_label(land)
+    if m > 1:
+        sizes = np.bincount(lab.ravel())
+        sizes[0] = 0
+        land = lab == int(np.argmax(sizes))
+    return land
 
 
 def _fix_enclaves(region_grid: np.ndarray, word_cells: np.ndarray) -> None:
     """Give word-less pockets of a region (cut off from its words) to the bordering region."""
-    from scipy.ndimage import label as cc_label
-
     R = int(region_grid.max()) + 1
     has_word = np.zeros(region_grid.shape, dtype=bool)
     has_word[word_cells[:, 1], word_cells[:, 0]] = True
@@ -701,34 +929,258 @@ def _fix_enclaves(region_grid: np.ndarray, word_cells: np.ndarray) -> None:
 
 
 # ---------------------------------------------------------------------------
+# halls
+
+
+def _place_halls(region_grid, word_dist, sea_dist, rr, pos, region, R, x0, y0) -> np.ndarray:
+    """Hall cell (array coordinates) per region: inside the region, clear of words and the
+    coast, as close as possible to the middle of the region's words."""
+    halls = np.zeros((R, 2), dtype=np.int64)
+    for r in range(R):
+        ys, xs = np.nonzero(region_grid == r)
+        ya, yb, xa, xb = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+        cells = region_grid[ya:yb, xa:xb] == r
+        inside = distance_transform_edt(np.pad(cells, 1))[1:-1, 1:-1]
+        target = pos[region == r].mean(axis=0) - [x0, y0]
+        base = cells & (sea_dist[ya:yb, xa:xb] >= 3.5) & (rr[ya:yb, xa:xb] >= PLAZA_RADIUS + 2.5)
+        for clear, margin in ((HALL_CLEAR, 2.5), (2.5, 1.5), (2.0, 1.0), (0.0, 0.0)):
+            ok = base & (word_dist[ya:yb, xa:xb] >= clear) & (inside >= margin)
+            if ok.any():
+                cy, cx = np.nonzero(ok)
+                d = (cx + xa - target[0]) ** 2 + (cy + ya - target[1]) ** 2
+                j = int(np.argmin(d))
+                halls[r] = (cx[j] + xa, cy[j] + ya)
+                break
+    return halls
+
+
+def _dist_to(points: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    m = np.ones(shape, dtype=bool)
+    m[points[:, 1], points[:, 0]] = False
+    return distance_transform_edt(m)
+
+
+# ---------------------------------------------------------------------------
+# roads
+
+_NB8 = [(-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0)] + [
+    (dy, dx, math.sqrt(2)) for dy in (-1, 1) for dx in (-1, 1)
+]
+ROAD_REUSE = 0.3  # cost of walking along an existing road (so roads merge into networks)
+
+
+def _astar(
+    cost: np.ndarray,
+    blocked: np.ndarray,
+    corner: np.ndarray,
+    s: tuple[int, int],
+    t: tuple[int, int],
+    pad: int,
+):
+    """Cheapest 8-connected path from s to t (array (y, x) cells) within a padded bounding
+    box. Diagonal steps never cut a ``corner`` cell (blocked or water), so a walker can
+    always follow the road. Returns a list of cells or None."""
+    h, w = cost.shape
+    ya, yb = max(min(s[0], t[0]) - pad, 0), min(max(s[0], t[0]) + pad, h - 1)
+    xa, xb = max(min(s[1], t[1]) - pad, 0), min(max(s[1], t[1]) + pad, w - 1)
+    C = cost[ya : yb + 1, xa : xb + 1].tolist()
+    B = blocked[ya : yb + 1, xa : xb + 1].tolist()
+    K = corner[ya : yb + 1, xa : xb + 1].tolist()
+    H, W = yb - ya + 1, xb - xa + 1
+    sy, sx, ty, tx = s[0] - ya, s[1] - xa, t[0] - ya, t[1] - xa
+    B[sy][sx] = False
+    B[ty][tx] = False
+
+    def heur(y: int, x: int) -> float:
+        dy, dx = abs(y - ty), abs(x - tx)
+        return ROAD_REUSE * (max(dy, dx) + 0.41421356 * min(dy, dx))
+
+    best = {(sy, sx): 0.0}
+    came: dict[tuple[int, int], tuple[int, int]] = {}
+    heap = [(heur(sy, sx), 0.0, sy, sx)]
+    while heap:
+        _, g, y, x = heapq.heappop(heap)
+        if (y, x) == (ty, tx):
+            path = [(y, x)]
+            while path[-1] in came:
+                path.append(came[path[-1]])
+            return [(py + ya, px + xa) for py, px in reversed(path)]
+        if g > best.get((y, x), math.inf):
+            continue
+        for dy, dx, step in _NB8:
+            vy, vx = y + dy, x + dx
+            if not (0 <= vy < H and 0 <= vx < W) or B[vy][vx]:
+                continue
+            if dy and dx and (K[y + dy][x] or K[y][x + dx]):
+                continue
+            ng = g + step * C[vy][vx]
+            if ng < best.get((vy, vx), math.inf) - 1e-12:
+                best[(vy, vx)] = ng
+                came[(vy, vx)] = (y, x)
+                heapq.heappush(heap, (ng + heur(vy, vx), ng, vy, vx))
+    return None
+
+
+def _mst_edges(P: np.ndarray, allowed: np.ndarray | None = None) -> list[tuple[int, int]]:
+    m = len(P)
+    if m < 2:
+        return []
+    D = np.sqrt(((P[:, None, :] - P[None, :, :]) ** 2).sum(-1)) + 1e-6
+    D += 1e-9 * np.arange(m)[:, None]  # deterministic ties
+    if allowed is not None:
+        D = np.where(allowed, D, 0.0)
+    T = minimum_spanning_tree(D).tocoo()
+    return sorted((min(a, b), max(a, b)) for a, b in zip(T.row.tolist(), T.col.tolist()))
+
+
+def _roads(
+    land, water, word_cells, region_grid, halls, word_xy, region, word_lot, reg_level, spawn
+) -> np.ndarray:
+    """Road cells: plaza -> HSK 1 halls, hall <-> neighboring halls (a spanning tree plus
+    some loops), and every lot -> its region's hall (a spanning tree per region)."""
+    R = len(halls)
+    blocked = ~land | word_cells
+    blocked[halls[:, 1], halls[:, 0]] = True
+    blocked[spawn[1], spawn[0]] = True  # the fountain
+    cost = np.ones(land.shape)
+    cost[water] = 6.0
+    near_word = binary_dilation(word_cells) & ~word_cells
+    cost[near_word] += 0.4
+    corner = blocked | water
+    road = np.zeros(land.shape, dtype=bool)
+
+    def connect(a: tuple[int, int], b: tuple[int, int]) -> None:
+        """a, b as (x, y) array cells."""
+        s, t = (a[1], a[0]), (b[1], b[0])
+        for pad in (10, 30):
+            path = _astar(cost, blocked, corner, s, t, pad)
+            if path:
+                for y, x in path:
+                    if not blocked[y, x]:
+                        road[y, x] = True
+                        cost[y, x] = ROAD_REUSE
+                return
+
+    # Plaza to the HSK 1 halls.
+    for r in range(R):
+        if reg_level[r] == 1:
+            connect(spawn, tuple(halls[r]))
+    # Hall to hall across region borders.
+    pairs = set()
+    for a, b in (
+        (region_grid[:, :-1], region_grid[:, 1:]),
+        (region_grid[:-1, :], region_grid[1:, :]),
+    ):
+        m = (a != b) & (a >= 0) & (b >= 0)
+        for u, v in zip(a[m].tolist(), b[m].tolist()):
+            pairs.add((min(u, v), max(u, v)))
+    allowed = np.zeros((R, R), dtype=bool)
+    for u, v in pairs:
+        allowed[u, v] = allowed[v, u] = True
+    tree = set(_mst_edges(halls.astype(np.float64), allowed))
+    loops = {
+        (u, v)
+        for u, v in pairs
+        if (u, v) not in tree and _hash01(np.array([u]), np.array([v]), SEED + 8)[0] < 0.3
+    }
+    hall_edges = sorted(
+        tree | loops, key=lambda e: (float(np.hypot(*(halls[e[0]] - halls[e[1]]))), e)
+    )
+    for u, v in hall_edges:
+        connect(tuple(halls[u]), tuple(halls[v]))
+    # Every lot to its region's hall.
+    for r in range(R):
+        members = np.where((region == r) & (word_lot >= 0))[0]
+        nodes = [tuple(halls[r])]
+        for lt in sorted(set(word_lot[members].tolist())):
+            cells = word_xy[members[word_lot[members] == lt]]
+            c = np.round(cells.mean(axis=0)).astype(np.int64)
+            node = _free_near(c, blocked, region_grid, r)
+            if node is not None:
+                nodes.append(node)
+        P = np.array(nodes, dtype=np.float64)
+        for a, b in _mst_edges(P):
+            connect(nodes[a], nodes[b])
+    return road
+
+
+def _free_near(c: np.ndarray, blocked: np.ndarray, region_grid: np.ndarray, r: int):
+    h, w = blocked.shape
+    for rad in range(3):
+        best = None
+        for dy in range(-rad, rad + 1):
+            for dx in range(-rad, rad + 1):
+                if max(abs(dy), abs(dx)) != rad:
+                    continue
+                x, y = int(c[0] + dx), int(c[1] + dy)
+                if 0 <= x < w and 0 <= y < h and not blocked[y, x] and region_grid[y, x] == r:
+                    d = dx * dx + dy * dy
+                    if best is None or d < best[0]:
+                        best = (d, (x, y))
+        if best:
+            return best[1]
+    return None
+
+
+# ---------------------------------------------------------------------------
 # terrain
 
 
+def _fields(fx: np.ndarray, fy: np.ndarray) -> dict[str, np.ndarray]:
+    return {
+        "detail": value_noise(fx, fy, 9.0, SEED + 5),
+        "elev": fbm(fx, fy, 24.0, SEED + 6),
+        "moist": fbm(fx, fy, 30.0, SEED + 7),
+        "pond": fbm(fx, fy, 10.0, SEED + 10),
+    }
+
+
+def _water(land, wild, word_dist, sea_dist, hall_dist, rr, fields) -> np.ndarray:
+    """Lakes in the open wilderness and a few ponds in town parks (never on or next to a
+    word, a hall or the plaza)."""
+    e = fields["elev"]
+    lake = wild & (word_dist >= 2.5) & (e < 0.37)
+    pond = ~wild & (word_dist >= 3.0) & (fields["pond"] < 0.3)
+    water = land & (lake | pond) & (hall_dist > 2.9) & (sea_dist > 2.5) & (rr >= PLAZA_RADIUS + 3)
+    # Drop puddles: water bodies smaller than a few cells read as glitches.
+    lab, n = cc_label(water)
+    sizes = np.bincount(lab.ravel(), minlength=n + 1)
+    keep = sizes >= MIN_WATER
+    keep[0] = False
+    return keep[lab]
+
+
 def _terrain(
-    gx, gy, land, region_grid, slot_dist, sea_dist, pos, x0, y0, theme, reg_level, themes_cfg, k
+    land,
+    wild,
+    region_grid,
+    word_dist,
+    sea_dist,
+    hall_dist,
+    rr,
+    water,
+    road,
+    word_cells,
+    word_xy,
+    theme,
+    themes_cfg,
+    k,
+    fields,
 ) -> np.ndarray:
-    h, w = gx.shape
-    fx, fy = gx.astype(np.float64), gy.astype(np.float64)
+    h, w = land.shape
     # Local theme field: which themes the nearby words belong to (smoothly blended).
     field_ = np.zeros((k, h, w))
-    px, py = pos[:, 0] - x0, pos[:, 1] - y0
-    np.add.at(field_, (theme, py, px), 1.0)
+    np.add.at(field_, (theme, word_xy[:, 1], word_xy[:, 0]), 1.0)
     for t in range(k):
-        field_[t] = gaussian_filter(field_[t], sigma=3.0, mode="constant")
+        field_[t] = gaussian_filter(field_[t], sigma=4.5, mode="constant")
     local = np.argmax(field_, axis=0)
 
-    level_grid = np.zeros((h, w), dtype=np.int64)
-    level_grid[land] = np.array(reg_level)[region_grid[land]]
-    wild = level_grid == WILD_LEVEL
-
-    detail = value_noise(fx, fy, 7.0, SEED + 5)
-    elev = fbm(fx, fy, 16.0, SEED + 6)
-    moist = fbm(fx, fy, 20.0, SEED + 7)
+    detail, e = fields["detail"], fields["elev"]
     bias_m = np.array([t.get("wild", {}).get("moisture", 0.0) for t in themes_cfg])[local]
     bias_e = np.array([t.get("wild", {}).get("elevation", 0.0) for t in themes_cfg])[local]
     dry = np.array([t.get("wild", {}).get("dry", "y") for t in themes_cfg])[local]
-    e = elev + bias_e
-    m = moist + bias_m
+    e = e + bias_e
+    m = fields["moist"] + bias_m
 
     g1 = np.array([t["ground"][0] for t in themes_cfg])[local]
     g2 = np.array([t["ground"][1] for t in themes_cfg])[local]
@@ -737,27 +1189,22 @@ def _terrain(
     wg = np.full((h, w), "h", dtype="<U1")
     wg[m > 0.58] = "f"
     wg[(m < 0.40)] = dry[m < 0.40]
-    wg[(e < 0.36) & (m > 0.52)] = "x"
+    wg[(e < 0.40) & (m > 0.52)] = "x"
     wg[(m >= 0.40) & (m <= 0.58) & (detail > 0.6)] = "g"
-    wg[e > 0.68] = "k"
-    wg[e > 0.78] = "s"
+    wg[e > 0.66] = "k"
+    wg[e > 0.76] = "s"
     ground = np.where(wild, wg, ground)
-
-    # Gaps between words: plazas in towns; lakes / peaks / clearings in the wilderness.
-    open_ = land & (slot_dist >= 2.0)
-    ground[open_ & ~wild] = "p"
-    lake = open_ & wild & (e < 0.5)
-    peak = open_ & wild & (e > 0.6)
-    ground[lake] = "="
-    ground[peak & (e <= 0.74)] = "k"
-    ground[peak & (e > 0.74)] = "s"
-
-    rr = r_eff(fx, fy)
+    ground[water] = "="
+    near_hall = hall_dist <= 1.6
+    ground[near_hall & ~wild] = "p"
+    ground[near_hall & wild] = "d"
+    ground[road & water] = "b"
+    ground[road & ~water & ~wild] = "+"
+    ground[road & ~water & wild] = ","
     ground[land & (rr < PLAZA_RADIUS + 0.9)] = "p"
-    ground[land & (sea_dist <= 1.5) & (ground != "=")] = "."
-    word_cells = np.zeros((h, w), dtype=bool)
-    word_cells[py, px] = True
-    bad = word_cells & np.isin(ground, ["=", "~"])
+    coast = land & (sea_dist <= 1.5) & ~np.isin(ground, ["=", "b", "+", ",", "p"])
+    ground[coast] = "."
+    bad = word_cells & np.isin(ground, list(WATER))
     ground[bad] = "g"
     ground[~land] = "~"
     return ground
@@ -866,7 +1313,7 @@ def _color(base: str, level: int, r: int) -> str:
 
 
 def _describe_regions(
-    words, region, reg_level, pos, theme, themes_cfg, ground, region_grid, x0, y0
+    words, region, reg_level, theme, themes_cfg, ground, region_grid, halls
 ) -> list[dict]:
     out = []
     used: Counter[str] = Counter()
@@ -892,10 +1339,6 @@ def _describe_regions(
             nth = min(used[name_en], 6)
             name_en += " " + ["", "", "II", "III", "IV", "V", "VI"][nth]
             name_zh += "·" + "　　二三四五六"[nth]
-        ys, xs = np.where(cells)
-        cx, cy = xs.mean() + x0, ys.mean() + y0
-        # Label at the region cell closest to its centroid (always inside the region).
-        j = int(np.argmin((xs + x0 - cx) ** 2 + (ys + y0 - cy) ** 2))
         out.append(
             {
                 "id": r,
@@ -906,8 +1349,8 @@ def _describe_regions(
                 "en": name_en,
                 "count": len(members),
                 "cells": int(cells.sum()),
-                "x": int(xs[j] + x0),
-                "y": int(ys[j] + y0),
+                "x": int(halls[r][0]),
+                "y": int(halls[r][1]),
                 "color": _color(cfg["color"], L, r),
             }
         )

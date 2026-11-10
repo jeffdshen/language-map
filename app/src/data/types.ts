@@ -92,7 +92,7 @@ export interface Region {
   en: string
   count: number
   cells: number
-  /** Label cell (inside the region). */
+  /** The region's hall (inside the region, on land, clear of landmarks). */
   x: number
   y: number
   color: string

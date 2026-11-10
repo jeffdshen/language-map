@@ -1,8 +1,11 @@
 import { useEffect, useRef } from 'react'
+import { cellIndex } from '../data/pack'
+import { walkGrid } from '../logic/walk'
 import { useStore } from '../store'
 import { emitCamera, loadCamera, saveCamera } from './camera'
 import { Minimap } from './Minimap'
-import { MapRenderer } from './renderer'
+import { loadPlayer, nearTarget, nextUnexplored, Player, savePlayer } from './player'
+import { MapRenderer, type PanelMode } from './renderer'
 
 const MOVE_KEYS: Record<string, [number, number]> = {
   w: [0, -1],
@@ -15,25 +18,39 @@ const MOVE_KEYS: Record<string, [number, number]> = {
   arrowright: [1, 0],
 }
 
-/** Cells per second when walking with the keyboard. */
-const WALK_SPEED = 14
-
 function typing(e: KeyboardEvent): boolean {
   const el = e.target as HTMLElement | null
   const tag = el?.tagName
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!el?.isContentEditable
 }
 
+function panelMode(s: { selected: number | null; details: boolean }): PanelMode {
+  return s.selected === null ? 'none' : s.details ? 'details' : 'popover'
+}
+
+/** Imperative handle on the map, for the HUD buttons. */
+interface MapHandle {
+  zoom(factor: number): void
+  center(): void
+}
+
 export function MapView() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const rendererRef = useRef<MapRenderer | null>(null)
-  const panelOpen = useStore((s) => s.selected !== null)
+  const handle = useRef<MapHandle | null>(null)
+  const details = useStore((s) => s.selected !== null && s.details)
 
   useEffect(() => {
     const canvas = canvasRef.current!
     const renderer = new MapRenderer(canvas)
-    rendererRef.current = renderer
-    const packName = useStore.getState().pack!.manifest.pack
+    const init = useStore.getState()
+    const pack = init.pack!
+    const { world } = pack
+    const packName = pack.manifest.pack
+    const layout = pack.manifest.layoutVersion
+    const grid = walkGrid(pack)
+    const start = loadPlayer(packName, layout) ?? { x: world.spawn[0], y: world.spawn[1] + 2 }
+    const player = new Player(grid, start.x, start.y)
+    let keyHints = false
 
     const sync = () => {
       const s = useStore.getState()
@@ -44,16 +61,114 @@ export function MapView() {
         settings: s.save.settings,
         selected: s.selected,
         hovered: s.hovered,
+        hall: s.hall,
       })
+      renderer.setPanel(panelMode(s))
     }
 
-    // Report the camera to overlays every frame, and remember it once it settles.
+    const updateNear = () => {
+      const s = useStore.getState()
+      if (!s.view) return
+      renderer.setNear(nearTarget(pack, s.view, s.save.settings.fogMode === 'hidden', player.x, player.y), keyHints)
+    }
+
     let saveTimer = 0
-    renderer.onCamera = (cam) => {
-      emitCamera(cam)
-      useStore.getState().setFocus(cam.x, cam.y)
+    const scheduleSave = () => {
       window.clearTimeout(saveTimer)
-      saveTimer = window.setTimeout(() => saveCamera(packName, { x: cam.x, y: cam.y, zoom: cam.scale / cam.base }), 400)
+      saveTimer = window.setTimeout(() => savePlayer(packName, layout, player.x, player.y), 500)
+    }
+
+    let lastCell = ''
+    /** After the player moves: update the region, what's in reach, and close a dialog left behind. */
+    const onMoved = (manual: boolean) => {
+      const s = useStore.getState()
+      const cell = `${Math.round(player.x)},${Math.round(player.y)}`
+      if (cell !== lastCell) {
+        lastCell = cell
+        s.setFocus(player.x, player.y)
+      }
+      updateNear()
+      scheduleSave()
+      if (manual && s.selected !== null && s.selectedFrom === 'map' && !s.details) {
+        const w = pack.words[s.selected]
+        if (Math.hypot(w.x - player.x, w.y - player.y) > 4) s.select(null)
+      }
+    }
+
+    // ---- the game loop: runs while a key is held or the player is walking somewhere
+    const held = new Set<string>()
+    let run = false
+    let loopRaf = 0
+    let last = 0
+    const loop = (now: number) => {
+      loopRaf = 0
+      const dt = last ? Math.min(0.05, Math.max(0, (now - last) / 1000)) : 1 / 60
+      last = now
+      let dx = 0
+      let dy = 0
+      for (const key of held) {
+        dx += MOVE_KEYS[key][0]
+        dy += MOVE_KEYS[key][1]
+      }
+      const manual = dx !== 0 || dy !== 0
+      const moved = player.update(dt, { dx, dy, run })
+      if (moved) {
+        renderer.follow()
+        onMoved(manual)
+      }
+      renderer.setPlayer(player)
+      if (held.size || player.busy) loopRaf = requestAnimationFrame(loop)
+      else {
+        last = 0
+        if (player.moving) {
+          player.moving = false
+          renderer.setPlayer(player)
+        }
+      }
+    }
+    const kick = () => {
+      if (!loopRaf) loopRaf = requestAnimationFrame(loop)
+    }
+
+    /** Walk to a cell (next to it, for a landmark). Returns false if there's no way there. */
+    const goTo = (x: number, y: number, arrive?: () => void): boolean => {
+      const ok = player.walkTo(x, y, arrive)
+      if (ok) {
+        renderer.follow()
+        kick()
+      }
+      return ok
+    }
+
+    /** Fast travel: put the player next to (x, y). */
+    const travel = (x: number, y: number) => {
+      const k = cellIndex(world, x, y)
+      // Stand in front of what's there: below its label for halls and the fountain, next to it for a word.
+      const big = k >= 0 && (pack.hallAt[k] >= 0 || (x === world.spawn[0] && y === world.spawn[1]))
+      const word = k >= 0 && pack.wordAt[k] >= 0
+      player.teleport(x, big ? y + 2 : word ? y + 1 : y)
+      renderer.setPlayer(player)
+      renderer.flyToPlayer()
+      onMoved(false)
+      scheduleSave()
+    }
+
+    const onCameraRequest = () => {
+      const s = useStore.getState()
+      const c = s.camera
+      if (!c) return
+      if (c.travel) travel(c.x, c.y)
+      else renderer.flyTo(c.x, c.y, { resetZoom: c.resetZoom })
+    }
+
+    renderer.onCamera = (cam) => emitCamera(cam)
+    let zoomTimer = 0
+    const rememberZoom = () => {
+      window.clearTimeout(zoomTimer)
+      zoomTimer = window.setTimeout(() => {
+        const cam = renderer.info()
+        saveCamera(packName, { x: cam.x, y: cam.y, zoom: cam.scale / cam.base })
+      }, 400)
     }
 
     const unsub = useStore.subscribe((s, prev) => {
@@ -62,42 +177,63 @@ export function MapView() {
         s.view !== prev.view ||
         s.save.settings !== prev.save.settings ||
         s.selected !== prev.selected ||
-        s.hovered !== prev.hovered
+        s.details !== prev.details ||
+        s.hovered !== prev.hovered ||
+        s.hall !== prev.hall
       ) {
         sync()
       }
-      if (s.selected !== null && s.selected !== prev.selected && s.selectedFrom === 'map' && s.pack) {
-        const w = s.pack.words[s.selected]
-        renderer.keepVisible(w.x, w.y, true)
-      }
-      if (s.camera && s.camera !== prev.camera) {
-        renderer.flyTo(s.camera.x, s.camera.y, { resetZoom: s.camera.resetZoom, panelOpen: s.selected !== null })
-      }
+      if (s.view !== prev.view || s.save.settings !== prev.save.settings) updateNear()
+      if (s.camera && s.camera !== prev.camera) onCameraRequest()
+      if (s.nextSeq !== prev.nextSeq) next()
     })
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
       renderer.resize(rect.width, rect.height, window.devicePixelRatio || 1)
-      const s = useStore.getState()
-      if (s.selected !== null && s.pack) {
-        const w = s.pack.words[s.selected]
-        renderer.keepVisible(w.x, w.y, true)
-      }
     }
     sync()
+    renderer.setPlayer(player)
     resize()
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)
-    {
+    renderer.setZoom(loadCamera(packName)?.zoom ?? 1)
+    renderer.follow(true)
+    onMoved(false)
+    onCameraRequest()
+
+    const interact = () => {
       const s = useStore.getState()
-      const saved = loadCamera(packName)
-      const [sx, sy] = s.pack!.world.spawn
-      if (saved) renderer.jump(saved.x, saved.y, saved.zoom)
-      else renderer.jump(sx, sy)
-      if (s.camera) renderer.flyTo(s.camera.x, s.camera.y, { resetZoom: s.camera.resetZoom, panelOpen: s.selected !== null })
+      if (!s.view) return
+      const t = nearTarget(pack, s.view, s.save.settings.fogMode === 'hidden', player.x, player.y)
+      if (!t) return
+      if ('word' in t) {
+        if (s.selected !== t.word) s.select(t.word, 'map')
+      } else s.openHall(t.hall)
     }
 
-    // ---- pointer interaction: pan, pinch, click, hover
+    const next = () => {
+      const s = useStore.getState()
+      if (!s.view) return
+      const j = s.here >= 0 ? nextUnexplored(pack, s.view, s.here, player.x, player.y) : null
+      if (j === null) {
+        s.toast('Every word in this region is explored. Try the challenge at its hall, or head on to the next region.')
+        return
+      }
+      s.select(j, 'map')
+      const w = pack.words[j]
+      if (!goTo(w.x, w.y)) renderer.flyTo(w.x, w.y)
+    }
+
+    handle.current = {
+      zoom: (f) => {
+        renderer.zoomBy(f)
+        rememberZoom()
+      },
+      center: () => renderer.follow(),
+    }
+
+    // ---- pointer: tap to walk / talk, drag to look around, pinch or wheel to zoom
     const pointers = new Map<number, { x: number; y: number }>()
     let dragged = false
     let downAt = { x: 0, y: 0 }
@@ -108,11 +244,33 @@ export function MapView() {
       return { x: e.clientX - rect.left, y: e.clientY - rect.top }
     }
 
+    const click = (sx: number, sy: number) => {
+      const s = useStore.getState()
+      const hit = renderer.hitTest(sx, sy)
+      if (hit && 'word' in hit) {
+        const w = pack.words[hit.word]
+        s.select(hit.word, 'map')
+        goTo(w.x, w.y)
+      } else if (hit && 'hall' in hit) {
+        const r = world.regions[hit.hall]
+        const open = () => useStore.getState().openHall(hit.hall)
+        if (!goTo(r.x, r.y, open)) open()
+      } else {
+        if (s.selected !== null) s.select(null)
+        const [wx, wy] = renderer.screenToWorld(sx, sy)
+        goTo(Math.round(wx), Math.round(wy))
+      }
+    }
+
     const onDown = (e: PointerEvent) => {
       try {
         canvas.setPointerCapture(e.pointerId)
       } catch {
-        // Synthetic or already-released pointers can't be captured; panning still works without it.
+        // Synthetic or already-released pointers can't be captured; dragging still works without it.
+      }
+      if (e.pointerType === 'touch' && keyHints) {
+        keyHints = false
+        updateNear()
       }
       const p = local(e)
       pointers.set(e.pointerId, p)
@@ -131,12 +289,13 @@ export function MapView() {
       const prev = pointers.get(e.pointerId)
       if (!prev) {
         const hit = renderer.hitTest(p.x, p.y)
-        useStore.getState().hover(hit)
-        canvas.style.cursor = hit !== null ? 'pointer' : 'grab'
+        useStore.getState().hover(hit && 'word' in hit ? hit.word : null)
+        renderer.setHallHover(hit && 'hall' in hit ? hit.hall : null)
+        canvas.style.cursor = hit ? 'pointer' : 'default'
         return
       }
       if (pointers.size === 1) {
-        if (!dragged && Math.hypot(p.x - downAt.x, p.y - downAt.y) > 4) dragged = true
+        if (!dragged && Math.hypot(p.x - downAt.x, p.y - downAt.y) > 6) dragged = true
         if (dragged) {
           renderer.panBy(p.x - prev.x, p.y - prev.y)
           canvas.style.cursor = 'grabbing'
@@ -145,11 +304,9 @@ export function MapView() {
         const others = [...pointers.entries()].filter(([id]) => id !== e.pointerId)
         const o = others[0][1]
         const d = Math.hypot(p.x - o.x, p.y - o.y)
-        const midPrev = { x: (prev.x + o.x) / 2, y: (prev.y + o.y) / 2 }
-        const mid = { x: (p.x + o.x) / 2, y: (p.y + o.y) / 2 }
-        renderer.panBy(mid.x - midPrev.x, mid.y - midPrev.y)
-        if (pinchDist > 0) renderer.zoomAt(mid.x, mid.y, d / pinchDist)
+        if (pinchDist > 0) renderer.zoomAt((p.x + o.x) / 2, (p.y + o.y) / 2, d / pinchDist)
         pinchDist = d
+        rememberZoom()
       }
       pointers.set(e.pointerId, p)
     }
@@ -158,11 +315,8 @@ export function MapView() {
       const p = local(e)
       const had = pointers.delete(e.pointerId)
       if (pointers.size < 2) pinchDist = 0
-      if (had && pointers.size === 0 && !dragged) {
-        const hit = renderer.hitTest(p.x, p.y)
-        useStore.getState().select(hit, 'map')
-      }
-      canvas.style.cursor = 'grab'
+      if (had && pointers.size === 0 && !dragged && e.type === 'pointerup') click(p.x, p.y)
+      canvas.style.cursor = 'default'
     }
 
     const onWheel = (e: WheelEvent) => {
@@ -170,52 +324,49 @@ export function MapView() {
       const p = local(e)
       const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY
       renderer.zoomAt(p.x, p.y, Math.exp(-delta * 0.0015))
+      rememberZoom()
     }
 
-    const onDbl = (e: MouseEvent) => {
-      const p = local(e)
-      renderer.zoomAt(p.x, p.y, 1.4)
+    const onLeave = () => {
+      useStore.getState().hover(null)
+      renderer.setHallHover(null)
     }
 
-    const onLeave = () => useStore.getState().hover(null)
-
-    // ---- keyboard: walk with WASD / arrow keys, zoom with + and -
-    const held = new Set<string>()
-    let walkRaf = 0
-    let last = 0
-    const walk = (now: number) => {
-      const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60
-      last = now
-      let dx = 0
-      let dy = 0
-      for (const key of held) {
-        dx += MOVE_KEYS[key][0]
-        dy += MOVE_KEYS[key][1]
-      }
-      const len = Math.hypot(dx, dy)
-      if (len > 0) renderer.panCells((dx / len) * WALK_SPEED * dt, (dy / len) * WALK_SPEED * dt)
-      if (held.size) walkRaf = requestAnimationFrame(walk)
-      else {
-        walkRaf = 0
-        last = 0
-      }
-    }
+    // ---- keyboard: WASD / arrows to walk (Shift runs), E or Space to talk, N for the next new word
     const blocked = () => {
       const s = useStore.getState()
-      return s.quest !== null || s.modal !== null
+      return s.quest !== null || s.modal !== null || s.hall !== null
     }
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') run = true
       if (typing(e) || e.metaKey || e.ctrlKey || e.altKey || blocked()) return
       const key = e.key.toLowerCase()
+      const onButton = (e.target as HTMLElement | null)?.tagName === 'BUTTON'
       if (key in MOVE_KEYS) {
         e.preventDefault()
         held.add(key)
-        if (!walkRaf) walkRaf = requestAnimationFrame(walk)
-      } else if (key === '+' || key === '=') renderer.zoomBy(1.25)
-      else if (key === '-' || key === '_') renderer.zoomBy(1 / 1.25)
+        if (!keyHints) {
+          keyHints = true
+          updateNear()
+        }
+        kick()
+      } else if (key === 'e' || (key === ' ' && !onButton)) {
+        e.preventDefault()
+        interact()
+      } else if (key === 'n') useStore.getState().nextWord()
+      else if (key === 'c') renderer.follow()
+      else if (key === '+' || key === '=') handle.current?.zoom(1.25)
+      else if (key === '-' || key === '_') handle.current?.zoom(1 / 1.25)
     }
-    const onKeyUp = (e: KeyboardEvent) => held.delete(e.key.toLowerCase())
-    const onBlur = () => held.clear()
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') run = false
+      held.delete(e.key.toLowerCase())
+    }
+    const onBlur = () => {
+      held.clear()
+      run = false
+    }
+    const onHide = () => savePlayer(packName, layout, player.x, player.y)
 
     canvas.addEventListener('pointerdown', onDown)
     canvas.addEventListener('pointermove', onMove)
@@ -223,40 +374,46 @@ export function MapView() {
     canvas.addEventListener('pointercancel', onUp)
     canvas.addEventListener('pointerleave', onLeave)
     canvas.addEventListener('wheel', onWheel, { passive: false })
-    canvas.addEventListener('dblclick', onDbl)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onBlur)
+    window.addEventListener('pagehide', onHide)
 
     return () => {
       unsub()
       ro.disconnect()
       renderer.destroy()
+      onHide()
+      handle.current = null
       window.clearTimeout(saveTimer)
-      if (walkRaf) cancelAnimationFrame(walkRaf)
+      window.clearTimeout(zoomTimer)
+      if (loopRaf) cancelAnimationFrame(loopRaf)
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('pointercancel', onUp)
       canvas.removeEventListener('pointerleave', onLeave)
       canvas.removeEventListener('wheel', onWheel)
-      canvas.removeEventListener('dblclick', onDbl)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
+      window.removeEventListener('pagehide', onHide)
     }
   }, [])
 
   return (
     <>
-      <canvas ref={canvasRef} className="map-canvas" aria-label="Vocabulary map" />
-      <div className={`map-hud ${panelOpen ? 'panel-open' : ''}`}>
+      <canvas ref={canvasRef} className="map-canvas" aria-label="Vocabulary map. Click to walk; WASD or arrow keys to move." />
+      <div className={`map-hud ${details ? 'panel-open' : ''}`}>
         <div className="zoom-controls">
-          <button type="button" title="Zoom in (+)" aria-label="Zoom in" onClick={() => rendererRef.current?.zoomBy(1.25)}>
+          <button type="button" title="Zoom in (+)" aria-label="Zoom in" onClick={() => handle.current?.zoom(1.25)}>
             +
           </button>
-          <button type="button" title="Zoom out (−)" aria-label="Zoom out" onClick={() => rendererRef.current?.zoomBy(1 / 1.25)}>
+          <button type="button" title="Zoom out (−)" aria-label="Zoom out" onClick={() => handle.current?.zoom(1 / 1.25)}>
             −
+          </button>
+          <button type="button" title="Center on you (C)" aria-label="Center on you" onClick={() => handle.current?.center()}>
+            ◎
           </button>
           <button type="button" title="Back to the start (H)" aria-label="Back to the start" onClick={() => useStore.getState().flyHome()}>
             ⌂

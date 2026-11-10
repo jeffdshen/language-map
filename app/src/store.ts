@@ -38,12 +38,16 @@ export interface CameraRequest {
   y: number
   /** Reset the zoom to the default game view. */
   resetZoom?: boolean
+  /** Move the player there too (fast travel), instead of only looking. */
+  travel?: boolean
   seq: number
 }
 
 export interface QuestState {
   word: number
   stage: number
+  /** Training in a region's hall: "next quest" stays in that region. */
+  region?: number
 }
 
 interface State {
@@ -57,13 +61,19 @@ interface State {
   today: string
   selected: number | null
   selectedFrom: SelectSource
+  /** Show the full details panel for the selected word (otherwise the small dialog). */
+  details: boolean
   hovered: number | null
+  /** Region whose hall dialog is open. */
+  hall: number | null
+  /** Bumped to ask the map to walk to the next unexplored word nearby. */
+  nextSeq: number
   modal: Modal
   quest: QuestState | null
   questLogOpen: boolean
   toasts: Toast[]
   camera: CameraRequest | null
-  /** Region at the center of the screen (-1 at sea). */
+  /** Region the player is in (-1 at sea). */
   here: number
   /** Character shown in the character-links view. */
   charFocus: string | null
@@ -74,15 +84,22 @@ interface Actions {
   tick(): void
   select(i: number | null, from?: SelectSource, fly?: boolean): void
   hover(i: number | null): void
-  flyTo(i: number): void
-  flyToCell(x: number, y: number): void
+  /** Show word `i`; with `travel`, the player goes there too. */
+  flyTo(i: number, travel?: boolean): void
+  flyToCell(x: number, y: number, travel?: boolean): void
+  /** Travel back to the fountain. */
   flyHome(): void
-  /** Called by the map as the camera moves. */
+  /** Called by the map as the player moves. */
   setFocus(x: number, y: number): void
+  setDetails(open: boolean): void
+  openHall(region: number): void
+  closeHall(): void
+  /** Walk to the nearest unexplored word in the current region. */
+  nextWord(): void
   openChar(ch: string): void
   setModal(m: Modal): void
   setQuestLog(open: boolean): void
-  openQuest(i: number, stage?: number): void
+  openQuest(i: number, stage?: number, region?: number): void
   closeQuest(): void
   revealWord(i: number): void
   revealNextWithChar(ch: string, exclude?: number): void
@@ -91,7 +108,8 @@ interface Actions {
   stopQuest(i: number): void
   practiceSuccess(i: number, stage: number): { counted: boolean; stageFinished: boolean; learned: boolean; revealed: number[] }
   markStage(i: number, stage: number, marked: boolean): void
-  markKnown(i: number): void
+  /** Mark a word as known; `quiet` skips the toast (and returns the words it uncovered). */
+  markKnown(i: number, quiet?: boolean): number[]
   resetWord(i: number): void
   bulkKnown(maxLevel: number): number
   updateSettings(patch: Partial<Settings>): void
@@ -107,7 +125,7 @@ export type Store = State & Actions
 
 let toastSeq = 0
 let cameraSeq = 0
-/** Last camera center reported by the map (not reactive; used to discover words "near you"). */
+/** Last player position reported by the map (not reactive; used to discover words "near you"). */
 let focus: [number, number] = [0, 0]
 
 /** [days per stage, counted stages] for the current settings. */
@@ -215,7 +233,10 @@ export const useStore = create<Store>()((set, get) => {
     today: dayKey(),
     selected: null,
     selectedFrom: 'map',
+    details: false,
     hovered: null,
+    hall: null,
+    nextSeq: 0,
     modal: null,
     quest: null,
     questLogOpen: false,
@@ -288,26 +309,33 @@ export const useStore = create<Store>()((set, get) => {
     select(i, from = 'map', fly = false) {
       // On narrow screens the word panel and quest log share the bottom sheet slot.
       const narrow = i !== null && typeof matchMedia === 'function' && matchMedia('(max-width: 700px)').matches
-      set(narrow ? { selected: i, selectedFrom: from, questLogOpen: false } : { selected: i, selectedFrom: from })
-      if (i !== null && fly) get().flyTo(i)
+      // Links followed from the details panel keep it open; anything else starts with the small dialog.
+      const details = i !== null && from === 'link' && get().details
+      const hall = i !== null ? null : get().hall
+      set(
+        narrow
+          ? { selected: i, selectedFrom: from, details, hall, questLogOpen: false }
+          : { selected: i, selectedFrom: from, details, hall },
+      )
+      if (i !== null && fly) get().flyTo(i, from === 'search' || from === 'url')
     },
 
     hover(i) {
       if (get().hovered !== i) set({ hovered: i })
     },
 
-    flyTo(i) {
+    flyTo(i, travel = false) {
       const w = word(i)
-      set({ camera: { x: w.x, y: w.y, seq: ++cameraSeq } })
+      set({ camera: { x: w.x, y: w.y, travel, seq: ++cameraSeq } })
     },
 
-    flyToCell(x, y) {
-      set({ camera: { x, y, seq: ++cameraSeq } })
+    flyToCell(x, y, travel = false) {
+      set({ camera: { x, y, travel, seq: ++cameraSeq } })
     },
 
     flyHome() {
       const [x, y] = get().pack?.world.spawn ?? [0, 0]
-      set({ camera: { x, y, resetZoom: true, seq: ++cameraSeq } })
+      set({ camera: { x, y, travel: true, seq: ++cameraSeq } })
     },
 
     setFocus(x, y) {
@@ -316,6 +344,22 @@ export const useStore = create<Store>()((set, get) => {
       if (!pack) return
       const r = regionAt(pack.world, x, y)
       if (r >= 0 && r !== here) set({ here: r })
+    },
+
+    setDetails(open) {
+      set({ details: open })
+    },
+
+    openHall(region) {
+      set({ hall: region, selected: null, details: false })
+    },
+
+    closeHall() {
+      set({ hall: null })
+    },
+
+    nextWord() {
+      set({ nextSeq: get().nextSeq + 1 })
     },
 
     openChar(ch) {
@@ -330,12 +374,12 @@ export const useStore = create<Store>()((set, get) => {
       set({ questLogOpen: open })
     },
 
-    openQuest(i, stage) {
+    openQuest(i, stage, region) {
       const { save } = get()
       const wp = save.progress[word(i).id]
       const [need, count] = rules(save.settings)
       const cur = P.currentStage(wp, need, count)
-      set({ quest: { word: i, stage: stage ?? (cur < 0 ? count - 1 : cur) } })
+      set({ quest: { word: i, stage: stage ?? (cur < 0 ? count - 1 : cur), region } })
     },
 
     closeQuest() {
@@ -418,7 +462,7 @@ export const useStore = create<Store>()((set, get) => {
       commit(progress)
     },
 
-    markKnown(i) {
+    markKnown(i, quiet = false) {
       const { save, today } = get()
       const id = word(i).id
       const wasLearned = P.isLearned(save.progress[id], ...rules(save.settings))
@@ -426,8 +470,11 @@ export const useStore = create<Store>()((set, get) => {
       let revealed: number[] = []
       if (!wasLearned) ({ progress, revealed } = autoReveal(progress, i, 2))
       commit(progress)
-      const names = revealed.map((j) => word(j).hanzi).join('、')
-      get().toast(`Marked ${word(i).hanzi} as known.${names ? ` Discovered ${names}.` : ''}`, 'success')
+      if (!quiet) {
+        const names = revealed.map((j) => word(j).hanzi).join('、')
+        get().toast(`Marked ${word(i).hanzi} as known.${names ? ` Discovered ${names}.` : ''}`, 'success')
+      }
+      return revealed
     },
 
     resetWord(i) {
@@ -495,7 +542,7 @@ export const useStore = create<Store>()((set, get) => {
       for (const i of pack.manifest.starters) progress = P.reveal(progress, pack.words[i].id, today)
       const fresh = newSave(pack.manifest.pack, pack.manifest.layoutVersion)
       enableWrites()
-      set({ save: { ...fresh, settings: get().save.settings }, saveError: null, selected: null, quest: null })
+      set({ save: { ...fresh, settings: get().save.settings }, saveError: null, selected: null, quest: null, hall: null })
       commit(progress, { welcomed: false })
       flushWrites()
       set({ modal: 'welcome' })

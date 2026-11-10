@@ -3,7 +3,7 @@
   "themes": [
     {
       "key": "grammar", "zh": "语法", "en": "Grammar & Function Words", "biome": "plaza", "color": "#cfc6b4",
-      "place": {"zh": "广场", "en": "Plaza"}, "ground": ["p", "g"],
+      "place": {"zh": "广场", "en": "Plaza"}, "ground": ["g", "p"],
       "en_keywords": ["and", "but", "because", "if", "also", "very", "not", "only", "then", "already", "still", "of", "with", "from", "although", "therefore", "even", "however"],
       "zh_keywords": ["和", "但是", "因为", "如果", "也", "很", "不", "就", "已经", "还", "的", "从", "虽然", "所以", "甚至"]
     },
@@ -27,25 +27,25 @@
     },
     {
       "key": "mind", "zh": "学习", "en": "Thinking & Learning", "biome": "scholar", "color": "#b9b2e6",
-      "place": {"zh": "书院", "en": "Academy"}, "ground": ["g", "p"],
+      "place": {"zh": "书院", "en": "Academy"}, "ground": ["g", "m"],
       "en_keywords": ["think", "know", "understand", "learn", "study", "school", "teacher", "knowledge", "idea", "reason", "remember", "believe", "decide", "exam", "theory", "logic"],
       "zh_keywords": ["想", "知道", "明白", "学习", "学校", "老师", "知识", "主意", "理由", "记得", "相信", "决定", "考试", "理论"]
     },
     {
       "key": "society", "zh": "社会", "en": "Society & Law", "biome": "citadel", "color": "#c7a2a2",
-      "place": {"zh": "城", "en": "Citadel"}, "ground": ["p", "d"], "wild": {"elevation": 0.05},
+      "place": {"zh": "城", "en": "Citadel"}, "ground": ["g", "d"], "wild": {"elevation": 0.05},
       "en_keywords": ["society", "government", "country", "law", "politics", "police", "army", "war", "rights", "public", "citizen", "policy", "crime", "history", "religion", "nation"],
       "zh_keywords": ["社会", "政府", "国家", "法律", "政治", "警察", "军队", "战争", "权利", "公民", "政策", "犯罪", "历史", "宗教"]
     },
     {
       "key": "work", "zh": "工作", "en": "Work & Economy", "biome": "market", "color": "#e6cf7a",
-      "place": {"zh": "市", "en": "Market"}, "ground": ["d", "p"],
+      "place": {"zh": "市", "en": "Market"}, "ground": ["d", "g"],
       "en_keywords": ["work", "job", "company", "business", "money", "buy", "sell", "price", "market", "office", "boss", "salary", "trade", "bank", "manage", "economy"],
       "zh_keywords": ["工作", "公司", "生意", "钱", "买", "卖", "价格", "市场", "办公室", "老板", "工资", "贸易", "银行", "管理", "经济"]
     },
     {
       "key": "tech", "zh": "科技", "en": "Science & Technology", "biome": "foundry", "color": "#9fb7c4",
-      "place": {"zh": "坊", "en": "Works"}, "ground": ["d", "p"], "wild": {"elevation": 0.06},
+      "place": {"zh": "坊", "en": "Works"}, "ground": ["d", "g"], "wild": {"elevation": 0.06},
       "en_keywords": ["science", "technology", "computer", "machine", "energy", "electricity", "chemistry", "physics", "internet", "phone", "industry", "material", "experiment", "engineering", "data", "metal"],
       "zh_keywords": ["科学", "技术", "电脑", "机器", "能源", "电", "化学", "物理", "网络", "手机", "工业", "材料", "实验", "工程", "数据"]
     },
@@ -81,7 +81,7 @@
     },
     {
       "key": "leisure", "zh": "文娱", "en": "Arts, Sports & Leisure", "biome": "festival", "color": "#e7a0d4",
-      "place": {"zh": "乐园", "en": "Fairground"}, "ground": ["m", "p"],
+      "place": {"zh": "乐园", "en": "Fairground"}, "ground": ["m", "g"],
       "en_keywords": ["music", "song", "dance", "art", "movie", "game", "sport", "play", "ball", "painting", "culture", "festival", "holiday", "hobby", "performance", "team"],
       "zh_keywords": ["音乐", "歌", "跳舞", "艺术", "电影", "游戏", "运动", "玩", "球", "画", "文化", "节日", "假期", "爱好", "表演"]
     },
@@ -99,7 +99,7 @@
     },
     {
       "key": "time", "zh": "时间", "en": "Time & Numbers", "biome": "clocktower", "color": "#d4c48e",
-      "place": {"zh": "钟楼", "en": "Clocktower"}, "ground": ["p", "g"],
+      "place": {"zh": "钟楼", "en": "Clocktower"}, "ground": ["g", "m"],
       "en_keywords": ["time", "day", "year", "month", "hour", "minute", "today", "tomorrow", "early", "late", "before", "after", "number", "many", "few", "amount"],
       "zh_keywords": ["时间", "天", "年", "月", "小时", "分钟", "今天", "明天", "早", "晚", "以前", "以后", "数字", "多", "少"]
     }

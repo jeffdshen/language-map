@@ -14,7 +14,7 @@ from .sources import load_lock
 from .words import LEVEL_LABELS, Word, pos_category
 from .world import GROUND, LAYOUT_VERSION, World, region_runs, world_stats
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 WORD_FIELDS = [
     "id",
@@ -235,6 +235,10 @@ def write_report(
         (
             f"- Grid: {world.size[0]}×{world.size[1]} cells; "
             f"land: {manifest['stats']['world']['land_cells']} cells"
+        ),
+        (
+            f"- Lots (hamlets): {manifest['stats']['world']['lots']}; "
+            f"road cells: {manifest['stats']['world']['road_cells']}"
         ),
         "- Words per land cell by distance from the center (must never increase outward): "
         + ", ".join(str(d) for d in manifest["stats"]["world"]["density_by_distance"]),

@@ -1,24 +1,8 @@
 import type { Pack } from '../data/pack'
 import { Vis, type MapView } from '../logic/explore'
 import type { Settings } from '../logic/save'
-import {
-  DECOR_DENSITY,
-  drawDecor,
-  drawFountain,
-  drawLandmark,
-  GOLD,
-  hash2,
-  hashString,
-  hexToRgb,
-  landmarkKind,
-  mix,
-  rgb,
-  roundRect,
-  shade,
-  valueNoise,
-  type LandmarkKind,
-  type RGB,
-} from './draw'
+import { DECOR_DENSITY, drawDecor, drawFountain, hash2, hashString, hexToRgb, mix, rgb, roundRect, shade, valueNoise, type RGB } from './draw'
+import { drawHall, drawLandmark, drawPlayer, LANDMARK_TOP, landmarkFor, landmarkWidth, type LandmarkKind, type TextSpot } from './landmarks'
 
 export interface RenderState {
   pack: Pack
@@ -26,7 +10,27 @@ export interface RenderState {
   settings: Settings
   selected: number | null
   hovered: number | null
+  /** Region whose hall dialog is open. */
+  hall: number | null
 }
+
+/** Something on the map the player can interact with. */
+export type Target = { word: number } | { hall: number }
+
+export type Facing = 'up' | 'down' | 'left' | 'right'
+
+export interface PlayerSprite {
+  /** Position in cells (continuous); the feet are a little below (x, y). */
+  x: number
+  y: number
+  facing: Facing
+  /** Walk cycle phase. */
+  step: number
+  moving: boolean
+}
+
+/** What covers part of the map: nothing, the word dialog at the bottom, or the details panel. */
+export type PanelMode = 'none' | 'popover' | 'details'
 
 interface Camera {
   /** Center, in cells. */
@@ -42,6 +46,9 @@ export interface CameraInfo extends Camera {
   /** Visible size, in cells. */
   cols: number
   rows: number
+  /** Player position, if any. */
+  px?: number
+  py?: number
 }
 
 interface Anim {
@@ -75,7 +82,22 @@ export const STATUS_COLORS = {
 export const ZOOM_MIN = 0.55
 export const ZOOM_MAX = 1.6
 
+/** How far below a cell's center the feet of the player stand, in cells. */
+export const PLAYER_FEET = 0.25
+
 const WATER = new Set(['~', '='])
+/** Road classes: 1 = town road, 2 = trail, 3 = bridge. */
+const ROAD_CLASS: Record<string, number> = { '+': 1, ',': 2, b: 3 }
+
+/** A word's spot on screen this frame (for the badge pass). */
+interface Drawn {
+  i: number
+  sx: number
+  sy: number
+  spot: TextSpot
+  /** Half the text plaque width, in px. */
+  half: number
+}
 
 export class MapRenderer {
   readonly canvas: HTMLCanvasElement
@@ -87,8 +109,16 @@ export class MapRenderer {
   cam: Camera = { x: 0, y: 0, scale: 48 }
   private anim: Anim | null = null
   private raf = 0
+  private lastStep = 0
   private state: RenderState | null = null
   onCamera: ((cam: CameraInfo) => void) | null = null
+
+  private player: PlayerSprite | null = null
+  private following = true
+  private panel: PanelMode = 'none'
+  private near: Target | null = null
+  private keyHints = false
+  private hallHover: number | null = null
 
   private pack: Pack | null = null
   private groundRgb: RGB[] = []
@@ -98,7 +128,14 @@ export class MapRenderer {
   private regionLevel: number[] = []
   private wordKind: LandmarkKind[] = []
   private wordHash: Float32Array = new Float32Array(0)
-  private wordRgb: RGB[] = []
+  /** Landmark width, in cells. */
+  private wordW: Float32Array = new Float32Array(0)
+  private wordSnow: Uint8Array = new Uint8Array(0)
+  /** Ground drawn under each cell (roads and bridges get the ground around them). */
+  private baseGround: Int16Array = new Int16Array(0)
+  private roadClass: Uint8Array = new Uint8Array(0)
+  /** Cells kept clear of decorations (under landmarks, halls and the fountain). */
+  private noDecor: Uint8Array = new Uint8Array(0)
   private bounds = { x0: -10, y0: -10, x1: 10, y1: 10 }
 
   private buf: HTMLCanvasElement | null = null
@@ -120,18 +157,70 @@ export class MapRenderer {
   private preparePack(pack: Pack) {
     this.pack = pack
     const { world } = pack
+    const codes = world.groundCodes
+    const N = world.w * world.h
     this.groundRgb = world.ground.map((g) => hexToRgb(g.color))
-    this.waterIdx = new Set(world.groundCodes.flatMap((c, k) => (WATER.has(c) ? [k] : [])))
-    this.oceanIdx = Math.max(0, world.groundCodes.indexOf('~'))
+    this.waterIdx = new Set(codes.flatMap((c, k) => (WATER.has(c) ? [k] : [])))
+    this.oceanIdx = Math.max(0, codes.indexOf('~'))
     this.regionRgb = world.regions.map((r) => hexToRgb(r.color))
     this.regionLevel = world.regions.map((r) => r.level)
-    this.wordKind = pack.words.map((w) => landmarkKind(w.pos, world.regions[w.region]?.kind ?? 'town'))
+    const cell = (x: number, y: number) => (y - world.y0) * world.w + (x - world.x0)
+
+    // Roads: remember their class, and paint the ground around them underneath.
+    this.roadClass = new Uint8Array(N)
+    this.baseGround = Int16Array.from(world.terrain)
+    for (let k = 0; k < N; k++) this.roadClass[k] = ROAD_CLASS[codes[world.terrain[k]]] ?? 0
+    const counts = new Map<number, number>()
+    for (let k = 0; k < N; k++) {
+      const rc = this.roadClass[k]
+      if (!rc) continue
+      const x = k % world.w
+      const y = Math.floor(k / world.w)
+      counts.clear()
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx
+          const yy = y + dy
+          if (xx < 0 || yy < 0 || xx >= world.w || yy >= world.h) continue
+          const kk = yy * world.w + xx
+          if (this.roadClass[kk]) continue
+          const g = world.terrain[kk]
+          if ((rc === 3) !== this.waterIdx.has(g)) continue
+          counts.set(g, (counts.get(g) ?? 0) + 1)
+        }
+      }
+      let best = rc === 3 ? this.oceanIdx : Math.max(0, codes.indexOf('g'))
+      let bestN = 0
+      for (const [g, n] of counts) {
+        if (n > bestN || (n === bestN && g < best)) {
+          best = g
+          bestN = n
+        }
+      }
+      this.baseGround[k] = best
+    }
+
     this.wordHash = Float32Array.from(pack.words, (w) => hashString(w.id))
-    this.wordRgb = pack.words.map((w) => {
-      const reg = this.regionRgb[w.region] ?? [180, 180, 180]
-      const theme = hexToRgb(world.themes[w.theme]?.color ?? '#b4b4b4')
-      return mix(reg, theme, 0.45)
+    this.wordKind = pack.words.map((w, i) => {
+      const k = cell(w.x, w.y)
+      const code = codes[this.baseGround[k] ?? 0] ?? 'g'
+      return landmarkFor(code, world.regions[w.region]?.kind === 'wild', this.wordHash[i])
     })
+    this.wordSnow = Uint8Array.from(pack.words, (w) => {
+      const code = codes[this.baseGround[cell(w.x, w.y)] ?? 0]
+      return code === 'k' || code === 's' ? 1 : 0
+    })
+    this.wordW = Float32Array.from(pack.words, (w, i) => landmarkWidth(this.wordKind[i], textWidth(w.hanzi) * 0.36))
+
+    this.noDecor = new Uint8Array(N)
+    const clear = (x: number, y: number) => {
+      if (x < world.x0 || y < world.y0 || x >= world.x0 + world.w || y >= world.y0 + world.h) return
+      this.noDecor[cell(x, y)] = 1
+    }
+    for (const w of pack.words) for (let dy = -1; dy <= 0; dy++) for (let dx = -1; dx <= 1; dx++) clear(w.x + dx, w.y + dy)
+    for (const r of world.regions) for (let dy = -2; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) clear(r.x + dx, r.y + dy)
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) clear(world.spawn[0] + dx, world.spawn[1] + dy)
+
     let x0 = Infinity
     let y0 = Infinity
     let x1 = -Infinity
@@ -159,9 +248,64 @@ export class MapRenderer {
     this.canvas.width = Math.round(this.w * dpr)
     this.canvas.height = Math.round(this.h * dpr)
     const zoom = first ? 1 : this.cam.scale / this.base
-    this.base = Math.min(60, Math.max(34, Math.min(this.w, this.h) / 16))
+    this.base = Math.min(64, Math.max(36, Math.min(this.w, this.h) / 13))
     this.cam = this.clampCam({ ...this.cam, scale: this.base * zoom })
+    if (this.following && this.player) this.cam = this.followCam()
     this.bufKey.cellPx = 0
+    this.requestDraw()
+  }
+
+  // ---- player & interaction state -------------------------------------------
+
+  setPlayer(p: PlayerSprite | null): void {
+    this.player = p
+    this.requestDraw()
+  }
+
+  /** Follow the player again; `snap` jumps there instead of easing. */
+  follow(snap = false): void {
+    this.following = true
+    if (snap && this.player) {
+      this.anim = null
+      this.cam = this.followCam()
+    }
+    this.requestDraw()
+  }
+
+  get isFollowing(): boolean {
+    return this.following
+  }
+
+  /** Glide the camera to the player (after a long jump). */
+  flyToPlayer(): void {
+    if (!this.player) return
+    this.following = true
+    const to = this.followCam()
+    const dist = Math.hypot(to.x - this.cam.x, to.y - this.cam.y)
+    if (dist * this.cam.scale > this.w * 1.5) {
+      // Too far to glide: cut, like a fast-travel screen.
+      this.anim = null
+      this.cam = to
+      this.requestDraw()
+    } else this.animateTo(to, Math.min(700, 300 + dist * 8))
+  }
+
+  setPanel(panel: PanelMode): void {
+    if (panel === this.panel) return
+    this.panel = panel
+    this.requestDraw()
+  }
+
+  setNear(t: Target | null, keyHints: boolean): void {
+    if (sameTarget(t, this.near) && keyHints === this.keyHints) return
+    this.near = t
+    this.keyHints = keyHints
+    this.requestDraw()
+  }
+
+  setHallHover(r: number | null): void {
+    if (r === this.hallHover) return
+    this.hallHover = r
     this.requestDraw()
   }
 
@@ -169,7 +313,8 @@ export class MapRenderer {
 
   info(): CameraInfo {
     const t = this.xf()
-    return { ...this.cam, base: this.base, cols: this.w / t.s, rows: this.h / t.s }
+    const p = this.player
+    return { ...this.cam, base: this.base, cols: this.w / t.s, rows: this.h / t.s, px: p?.x, py: p?.y }
   }
 
   private clampCam(c: Camera): Camera {
@@ -190,10 +335,17 @@ export class MapRenderer {
     return { s, cellPx, ox, oy }
   }
 
-  /** Jump to a cell at a zoom relative to the default view. */
+  /** Jump to a cell at a zoom relative to the default view (free look). */
   jump(x: number, y: number, zoom = 1): void {
     this.anim = null
     this.cam = this.clampCam({ x, y, scale: this.base * zoom })
+    this.requestDraw()
+  }
+
+  /** Set the zoom relative to the default view, keeping the player in view. */
+  setZoom(zoom: number): void {
+    this.cam = this.clampCam({ ...this.cam, scale: this.base * zoom })
+    if (this.following && this.player) this.cam = this.followCam()
     this.requestDraw()
   }
 
@@ -207,63 +359,64 @@ export class MapRenderer {
     return [t.ox + x * t.s, t.oy + y * t.s]
   }
 
+  /** Drag the map: look around without moving the player. */
   panBy(dx: number, dy: number): void {
     this.anim = null
+    this.following = false
     this.cam = this.clampCam({ ...this.cam, x: this.cam.x - dx / this.cam.scale, y: this.cam.y - dy / this.cam.scale })
-    this.requestDraw()
-  }
-
-  /** Pan by a number of cells (keyboard movement). */
-  panCells(dx: number, dy: number): void {
-    this.anim = null
-    this.cam = this.clampCam({ ...this.cam, x: this.cam.x + dx, y: this.cam.y + dy })
     this.requestDraw()
   }
 
   zoomAt(sx: number, sy: number, factor: number): void {
     this.anim = null
+    if (this.following && this.player) {
+      // Zoom around the player so they stay put on screen.
+      ;[sx, sy] = this.worldToScreen(this.player.x, this.player.y)
+    }
     const [wx, wy] = this.screenToWorld(sx, sy)
     const scale = Math.min(this.base * ZOOM_MAX, Math.max(this.base * ZOOM_MIN, this.cam.scale * factor))
     this.cam = this.clampCam({ x: wx - (sx - this.w / 2) / scale, y: wy - (sy - this.h / 2) / scale, scale })
+    if (this.following && this.player) this.cam = this.followCam()
     this.requestDraw()
   }
 
   zoomBy(factor: number): void {
-    this.animateTo({ ...this.cam, scale: this.cam.scale * factor }, 250)
+    const scale = this.cam.scale * factor
+    if (this.following && this.player) this.animateTo(this.followCam(scale), 250)
+    else this.animateTo({ ...this.cam, scale }, 250)
   }
 
-  /** Screen area not covered by the word panel (side panel on desktop, bottom sheet on mobile). */
-  private freeRect(panelOpen: boolean): { l: number; r: number; t: number; b: number } {
-    const top = this.w > 700 ? 64 : 104
-    if (!panelOpen) return { l: 0, r: this.w, t: top, b: this.h }
-    if (this.w > 700) return { l: 0, r: this.w - 414, t: top, b: this.h }
-    return { l: 0, r: this.w, t: top, b: this.h * 0.38 }
+  /** Screen area not covered by the top bar and the open panel. */
+  private freeRect(): { l: number; r: number; t: number; b: number } {
+    const wide = this.w > 700
+    const top = wide ? 64 : 104
+    if (this.panel === 'details') {
+      if (wide) return { l: 0, r: this.w - 414, t: top, b: this.h }
+      return { l: 0, r: this.w, t: top, b: this.h * 0.38 }
+    }
+    if (this.panel === 'popover') return { l: 0, r: this.w, t: top, b: this.h - (wide ? 190 : Math.min(this.h * 0.45, 250)) }
+    return { l: 0, r: this.w, t: top, b: this.h }
   }
 
-  flyTo(x: number, y: number, opts: { resetZoom?: boolean; panelOpen?: boolean } = {}): void {
+  /** Camera that puts the player in the middle of the free part of the screen. */
+  private followCam(scale = this.cam.scale): Camera {
+    const p = this.player!
+    const s = Math.min(this.base * ZOOM_MAX, Math.max(this.base * ZOOM_MIN, scale))
+    const f = this.freeRect()
+    const dx = ((f.l + f.r) / 2 - this.w / 2) / s
+    const dy = ((f.t + f.b) / 2 - this.h / 2) / s
+    return this.clampCam({ x: p.x - dx, y: p.y - 0.3 - dy, scale: s })
+  }
+
+  /** Look at a cell without moving the player. */
+  flyTo(x: number, y: number, opts: { resetZoom?: boolean } = {}): void {
+    this.following = false
     const s = opts.resetZoom ? this.base : this.cam.scale
-    const f = this.freeRect(!!opts.panelOpen)
+    const f = this.freeRect()
     const dx = ((f.l + f.r) / 2 - this.w / 2) / s
     const dy = ((f.t + f.b) / 2 - this.h / 2) / s
     const dist = Math.hypot(x - dx - this.cam.x, y - dy - this.cam.y)
     this.animateTo({ x: x - dx, y: y - dy, scale: s }, Math.min(900, 380 + dist * 6))
-  }
-
-  /** Pan just enough that cell (x, y) is not hidden behind the word panel. */
-  keepVisible(x: number, y: number, panelOpen: boolean): void {
-    if (this.anim) return
-    const f = this.freeRect(panelOpen)
-    const m = 70
-    const [sx, sy] = this.worldToScreen(x, y)
-    let dx = 0
-    let dy = 0
-    if (sx < f.l + m) dx = sx - (f.l + m)
-    else if (sx > f.r - m) dx = sx - (f.r - m)
-    if (sy < f.t + m) dy = sy - (f.t + m)
-    else if (sy > f.b - m) dy = sy - (f.b - m)
-    if (dx || dy) {
-      this.animateTo({ ...this.cam, x: this.cam.x + dx / this.cam.scale, y: this.cam.y + dy / this.cam.scale }, 400)
-    }
   }
 
   private animateTo(to: Camera, dur = 650): void {
@@ -272,15 +425,33 @@ export class MapRenderer {
   }
 
   private step(now: number): boolean {
+    const dt = this.lastStep ? Math.min(0.1, Math.max(0, (now - this.lastStep) / 1000)) : 1 / 60
+    this.lastStep = now
     const a = this.anim
-    if (!a) return false
-    // rAF timestamps can predate the performance.now() taken in animateTo, so clamp at 0 too.
-    const t = Math.max(0, Math.min(1, (now - a.t0) / a.dur))
-    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
-    const ls = Math.log(a.from.scale) + (Math.log(a.to.scale) - Math.log(a.from.scale)) * e
-    this.cam = { x: a.from.x + (a.to.x - a.from.x) * e, y: a.from.y + (a.to.y - a.from.y) * e, scale: Math.exp(ls) }
-    if (t >= 1) this.anim = null
-    return this.anim !== null
+    if (a) {
+      // rAF timestamps can predate the performance.now() taken in animateTo, so clamp at 0 too.
+      const t = Math.max(0, Math.min(1, (now - a.t0) / a.dur))
+      const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+      const ls = Math.log(a.from.scale) + (Math.log(a.to.scale) - Math.log(a.from.scale)) * e
+      this.cam = { x: a.from.x + (a.to.x - a.from.x) * e, y: a.from.y + (a.to.y - a.from.y) * e, scale: Math.exp(ls) }
+      if (t >= 1) this.anim = null
+      return true
+    }
+    if (this.following && this.player) {
+      const to = this.followCam()
+      const dx = to.x - this.cam.x
+      const dy = to.y - this.cam.y
+      if (Math.hypot(dx, dy) * this.cam.scale < 0.5) {
+        this.cam = to
+        this.lastStep = 0
+        return false
+      }
+      const k = 1 - Math.exp(-dt * 8)
+      this.cam = { ...this.cam, x: this.cam.x + dx * k, y: this.cam.y + dy * k }
+      return true
+    }
+    this.lastStep = 0
+    return false
   }
 
   get animating(): boolean {
@@ -294,30 +465,42 @@ export class MapRenderer {
     return st.settings.fogMode !== 'hidden' || st.view.vis[i] >= Vis.Frontier
   }
 
-  hitTest(sx: number, sy: number): number | null {
+  hitTest(sx: number, sy: number): Target | null {
     const st = this.state
     if (!st) return null
     const [wx, wy] = this.screenToWorld(sx, sy)
-    const { world, wordAt, words } = st.pack
-    let best: number | null = null
-    let bestD = 0.62
+    const { world, wordAt, hallAt } = st.pack
+    let best: Target | null = null
+    let bestD = Infinity
     const cx = Math.round(wx)
     const cy = Math.round(wy)
-    for (let dy = -2; dy <= 2; dy++) {
+    for (let dy = -1; dy <= 2; dy++) {
       for (let dx = -2; dx <= 2; dx++) {
-        const gx = cx + dx - world.x0
-        const gy = cy + dy - world.y0
+        const x = cx + dx
+        const y = cy + dy
+        const gx = x - world.x0
+        const gy = y - world.y0
         if (gx < 0 || gy < 0 || gx >= world.w || gy >= world.h) continue
-        const j = wordAt[gy * world.w + gx]
-        if (j < 0 || !this.drawable(j)) continue
-        const w = words[j]
-        // The landmark, or its name plate just below it.
-        const dIcon = Math.hypot(wx - w.x, wy - (w.y - 0.05))
-        const dLabel = Math.hypot((wx - w.x) * 0.75, wy - (w.y + 0.72)) * 1.2
-        const d = Math.min(dIcon, dLabel)
-        if (d < bestD) {
-          bestD = d
-          best = j
+        const k = gy * world.w + gx
+        const j = wordAt[k]
+        if (j >= 0 && (this.drawable(j) || j === st.selected)) {
+          const half = Math.max(0.5, this.wordW[j] / 2)
+          const top = LANDMARK_TOP[this.wordKind[j]] + 0.1
+          if (Math.abs(wx - x) < half && wy >= y - top && wy <= y + 0.6) {
+            const d = Math.abs(wx - x) + Math.abs(wy - y)
+            if (d < bestD) {
+              bestD = d
+              best = { word: j }
+            }
+          }
+        }
+        const r = hallAt[k]
+        if (r >= 0 && Math.abs(wx - x) < 1.2 && wy >= y - 1.7 && wy <= y + 1.3) {
+          const d = Math.abs(wx - x) + Math.abs(wy - y)
+          if (d < bestD) {
+            bestD = d
+            best = { hall: r }
+          }
         }
       }
     }
@@ -367,9 +550,8 @@ export class MapRenderer {
     }
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
     this.drawFog(t)
-    this.drawSpawn(t)
-    this.drawRegionLabels(t)
-    this.drawWords(t)
+    const drawn = this.drawScene(t)
+    this.drawBadges(t, drawn)
     this.onCamera?.(this.info())
   }
 
@@ -379,7 +561,7 @@ export class MapRenderer {
     const [x0, y0, x1, y1] = this.visibleCells(t)
     const k = this.bufKey
     if (k.cellPx === t.cellPx && x0 >= k.x0 && y0 >= k.y0 && x1 < k.x0 + k.cols && y1 < k.y0 + k.rows) return
-    let margin = 4
+    let margin = 6
     const area = (m: number) => (x1 - x0 + 1 + 2 * m) * (y1 - y0 + 1 + 2 * m) * t.cellPx * t.cellPx
     while (margin > 1 && area(margin) > 16e6) margin--
     this.renderTerrain(x0 - margin, y0 - margin, x1 - x0 + 1 + 2 * margin, y1 - y0 + 1 + 2 * margin, t.cellPx)
@@ -387,7 +569,7 @@ export class MapRenderer {
 
   private renderTerrain(bx0: number, by0: number, cols: number, rows: number, u: number) {
     const pack = this.pack!
-    const { world, wordAt } = pack
+    const { world } = pack
     const c = this.buf ?? document.createElement('canvas')
     c.width = cols * u
     c.height = rows * u
@@ -398,8 +580,12 @@ export class MapRenderer {
       const gy = y - world.y0
       return gx < 0 || gy < 0 || gx >= world.w || gy >= world.h ? -1 : gy * world.w + gx
     }
-    const groundOf = (k: number) => (k < 0 ? this.oceanIdx : world.terrain[k])
+    const groundOf = (k: number) => (k < 0 ? this.oceanIdx : this.baseGround[k])
     const isWater = (k: number) => this.waterIdx.has(groundOf(k))
+    const road = (x: number, y: number) => {
+      const k = at(x, y)
+      return k < 0 ? 0 : this.roadClass[k]
+    }
     const colors: RGB[] = new Array(cols * rows)
     // Base tiles, painted 2 px per cell and scaled up smoothly so neighbouring grounds blend
     // across each cell edge while every cell keeps a solid core.
@@ -442,16 +628,70 @@ export class MapRenderer {
     g.imageSmoothingQuality = 'low'
     g.drawImage(tiles, 0, 0, cols * u, rows * u)
 
-    // Decorations on empty cells (not on words or the name plates under them).
+    // Roads and trails: strokes between the centers of neighbouring road cells. Diagonal links only where the
+    // road really turns diagonally (no orthogonal road cell shared by both ends).
+    const roads = new Path2D()
+    const trails = new Path2D()
+    const bridges = new Path2D()
+    // 2×2 blocks of road would leave a hole between the four strokes; they get filled in afterwards.
+    const roadBlocks = new Path2D()
+    const trailBlocks = new Path2D()
+    const link = (q: number, r: number, a: number, q2: number, r2: number, b: number) => {
+      const path = a === 3 || b === 3 ? bridges : a === 1 && b === 1 ? roads : trails
+      path.moveTo(q * u + u / 2, r * u + u / 2)
+      path.lineTo(q2 * u + u / 2, r2 * u + u / 2)
+    }
+    for (let r = -1; r <= rows; r++) {
+      for (let q = -1; q <= cols; q++) {
+        const x = bx0 + q
+        const y = by0 + r
+        const a = road(x, y)
+        if (!a) continue
+        const cx = q * u + u / 2
+        const cy = r * u + u / 2
+        const own = a === 3 ? bridges : a === 1 ? roads : trails
+        own.moveTo(cx, cy)
+        own.lineTo(cx + 0.01, cy)
+        const e = road(x + 1, y)
+        const s = road(x, y + 1)
+        if (e) link(q, r, a, q + 1, r, e)
+        if (s) link(q, r, a, q, r + 1, s)
+        const se = road(x + 1, y + 1)
+        if (se && !e && !s) link(q, r, a, q + 1, r + 1, se)
+        const sw = road(x - 1, y + 1)
+        if (sw && !road(x - 1, y) && !s) link(q, r, a, q - 1, r + 1, sw)
+        if (e && s && se && a !== 3 && e !== 3 && s !== 3 && se !== 3)
+          (a === 1 && e === 1 && s === 1 && se === 1 ? roadBlocks : trailBlocks).rect(cx, cy, u, u)
+      }
+    }
+    const roadRgb = this.groundRgb[codes.indexOf('+')] ?? [217, 197, 156]
+    const trailRgb = this.groundRgb[codes.indexOf(',')] ?? [201, 177, 137]
+    g.lineCap = 'round'
+    g.lineJoin = 'round'
+    g.strokeStyle = rgb(shade(trailRgb, -0.3), 0.55)
+    g.lineWidth = u * 0.44
+    g.stroke(trails)
+    g.strokeStyle = rgb(shade(roadRgb, -0.32), 0.75)
+    g.lineWidth = u * 0.66
+    g.stroke(roads)
+    g.strokeStyle = rgb(trailRgb)
+    g.lineWidth = u * 0.34
+    g.stroke(trails)
+    g.strokeStyle = rgb(roadRgb)
+    g.lineWidth = u * 0.54
+    g.stroke(roads)
+    g.fillStyle = rgb(trailRgb)
+    g.fill(trailBlocks)
+    g.fillStyle = rgb(roadRgb)
+    g.fill(roadBlocks)
+
+    // Decorations on empty cells (not on roads, or under landmarks and halls).
     for (let r = 0; r < rows; r++) {
       for (let q = 0; q < cols; q++) {
         const x = bx0 + q
         const y = by0 + r
         const k = at(x, y)
-        if (k >= 0 && wordAt[k] >= 0) continue
-        const above = at(x, y - 1)
-        if (above >= 0 && wordAt[above] >= 0) continue
-        if (Math.hypot(x - world.spawn[0], y - world.spawn[1]) < 1.6) continue
+        if (k >= 0 && (this.noDecor[k] || this.roadClass[k])) continue
         const code = codes[groundOf(k)]
         const h = hash2(x, y, 11)
         if (h >= (DECOR_DENSITY[code] ?? 0)) continue
@@ -526,6 +766,39 @@ export class MapRenderer {
     g.lineWidth = Math.max(1.5, u * 0.06)
     g.stroke(thick)
 
+    // Bridges over everything else on the ground, with planks across.
+    g.lineCap = 'butt'
+    g.strokeStyle = 'rgb(96, 66, 40)'
+    g.lineWidth = u * 0.72
+    g.stroke(bridges)
+    g.strokeStyle = 'rgb(168, 124, 82)'
+    g.lineWidth = u * 0.58
+    g.stroke(bridges)
+    g.strokeStyle = 'rgba(96, 66, 40, 0.7)'
+    g.lineWidth = Math.max(1, u * 0.03)
+    g.beginPath()
+    for (let r = 0; r < rows; r++) {
+      for (let q = 0; q < cols; q++) {
+        const x = bx0 + q
+        const y = by0 + r
+        if (road(x, y) !== 3) continue
+        const across = road(x - 1, y) || road(x + 1, y)
+        for (let s = -1.5; s <= 1.5; s++) {
+          const o = s * u * 0.22
+          const cx = q * u + u / 2
+          const cy = r * u + u / 2
+          if (across) {
+            g.moveTo(cx + o, cy - u * 0.27)
+            g.lineTo(cx + o, cy + u * 0.27)
+          } else {
+            g.moveTo(cx - u * 0.27, cy + o)
+            g.lineTo(cx + u * 0.27, cy + o)
+          }
+        }
+      }
+    }
+    g.stroke()
+
     this.buf = c
     this.bufKey = { cellPx: u, x0: bx0, y0: by0, cols, rows }
   }
@@ -582,227 +855,250 @@ export class MapRenderer {
     ctx.drawImage(this.fog, t.ox + (world.x0 - 0.5) * t.s, t.oy + (world.y0 - 0.5) * t.s, world.w * t.s, world.h * t.s)
   }
 
-  private drawSpawn(t: Transform) {
-    const { world } = this.state!.pack
-    const [x, y] = world.spawn
-    const sx = t.ox + x * t.s
-    const sy = t.oy + y * t.s
-    if (sx < -2 * t.s || sy < -2 * t.s || sx > this.w + 2 * t.s || sy > this.h + 2 * t.s) return
-    const ctx = this.ctx
-    drawFountain(ctx, sx, sy, t.s)
-    const px = Math.max(11, Math.min(18, t.s * 0.3))
-    ctx.font = `700 ${px}px ${FONT_ZH}`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    ctx.lineJoin = 'round'
-    ctx.lineWidth = 3
-    ctx.strokeStyle = 'rgba(255, 252, 244, 0.9)'
-    ctx.fillStyle = 'rgba(92, 64, 30, 0.95)'
-    ctx.strokeText('起点 · Start', sx, sy + t.s * 0.62)
-    ctx.fillText('起点 · Start', sx, sy + t.s * 0.62)
+  // ---- scene: landmarks, halls, the fountain and the player, back to front ----
+
+  private zhPx(u: number): number {
+    return Math.min(26, Math.max(10, u * 0.36))
   }
 
-  private drawRegionLabels(t: Transform) {
-    const { world } = this.state!.pack
+  private drawScene(t: Transform): Drawn[] {
+    const st = this.state!
+    const { pack } = st
+    const { world, wordAt, hallAt } = pack
+    const u = t.s
+    const [x0, y0, x1, y1] = this.visibleCells(t, 2)
+    // [base y in cells, kind (0 word, 1 hall, 2 fountain, 3 player), id]
+    const items: [number, number, number][] = []
+    for (let y = Math.max(y0, world.y0); y <= Math.min(y1, world.y0 + world.h - 1); y++) {
+      const row = (y - world.y0) * world.w
+      for (let x = Math.max(x0, world.x0); x <= Math.min(x1, world.x0 + world.w - 1); x++) {
+        const k = row + x - world.x0
+        const j = wordAt[k]
+        if (j >= 0 && (this.drawable(j) || j === st.selected)) items.push([y + 0.38, 0, j])
+        const r = hallAt[k]
+        if (r >= 0) items.push([y + 0.4, 1, r])
+      }
+    }
+    const [fx, fy] = world.spawn
+    if (fx >= x0 && fx <= x1 && fy >= y0 && fy <= y1) items.push([fy + 0.3, 2, 0])
+    const p = this.player
+    if (p) items.push([p.y + PLAYER_FEET, 3, 0])
+    items.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+
+    const drawn: Drawn[] = []
     const ctx = this.ctx
-    const [x0, y0, x1, y1] = this.visibleCells(t, 6)
-    const px = Math.max(13, Math.min(24, t.s * 0.44))
+    for (const [, kind, id] of items) {
+      if (kind === 0) {
+        const d = this.drawWord(t, id)
+        if (d) drawn.push(d)
+      } else if (kind === 1) {
+        const r = world.regions[id]
+        const sx = t.ox + r.x * u
+        const sy = t.oy + r.y * u
+        if (id === st.hall || id === this.hallHover || this.isNear({ hall: id })) {
+          this.drawRing(sx, sy + u * 0.02, u * 2, id === st.hall ? 2 : this.isNear({ hall: id }) ? 1 : 0)
+        }
+        drawHall(ctx, sx, sy, u, this.regionRgb[id], st.view.regionLearned[id] >= r.count)
+      } else if (kind === 2) {
+        drawFountain(ctx, t.ox + fx * u, t.oy + fy * u, u)
+      } else if (p) {
+        drawPlayer(ctx, t.ox + p.x * u, t.oy + (p.y + PLAYER_FEET) * u, u, p.facing, p.step, p.moving)
+      }
+    }
+    return drawn
+  }
+
+  private isNear(t: Target): boolean {
+    const n = this.near
+    return !!n && sameTarget(n, t)
+  }
+
+  private drawWord(t: Transform, i: number): Drawn | null {
+    const st = this.state!
+    const w = st.pack.words[i]
+    const v = st.view.vis[i]
+    const { fogMode } = st.settings
+    const ctx = this.ctx
+    const u = t.s
+    const sx = t.ox + w.x * u
+    const sy = t.oy + w.y * u
+    const unexplored = v <= Vis.Frontier
+    const mystery = unexplored && fogMode === 'hidden'
+    const dimmed = unexplored && fogMode === 'dim'
+    const W = this.wordW[i] * u
+    const sel = i === st.selected
+    const near = this.isNear({ word: i })
+    if (sel || near || i === st.hovered) this.drawRing(sx, sy, W, sel ? 2 : near ? 1 : 0)
+    const muted = mystery ? 0.9 : dimmed ? (v === Vis.Frontier ? 0.4 : 0.62) : 0
+    const spot = drawLandmark(ctx, this.wordKind[i], sx, sy, {
+      u,
+      w: W,
+      tint: this.regionRgb[w.region] ?? [180, 180, 180],
+      h: this.wordHash[i],
+      muted,
+      snow: this.wordSnow[i] === 1,
+    })
+    const zhPx = this.zhPx(u)
+    const text = mystery ? '?' : w.hanzi
+    const tw = textWidth(text) * zhPx
+    const half = tw / 2 + zhPx * 0.3
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.lineJoin = 'round'
-    for (const r of world.regions) {
-      if (r.x < x0 || r.x > x1 || r.y < y0 || r.y > y1) continue
-      // Words sit on even rows, so odd rows are free for names.
-      const ly = r.y % 2 === 0 ? r.y + 1 : r.y
-      const sx = t.ox + r.x * t.s
-      const sy = t.oy + ly * t.s + t.s * 0.12
-      const dark = rgb(shade(this.regionRgb[r.id], -0.6))
-      ctx.globalAlpha = 0.9
-      ctx.font = `800 ${px}px ${FONT_ZH}`
-      ctx.lineWidth = Math.max(3, px * 0.24)
-      ctx.strokeStyle = 'rgba(255, 252, 244, 0.85)'
-      ctx.fillStyle = dark
-      ctx.strokeText(r.zh, sx, sy)
-      ctx.fillText(r.zh, sx, sy)
-      const sub = `${r.en.toUpperCase()} · ${this.levelLabel(r.level)}`
-      ctx.font = `700 ${Math.max(9, px * 0.46)}px ${FONT_UI}`
-      ctx.lineWidth = 3
-      ctx.strokeText(sub, sx, sy + px * 0.8)
-      ctx.fillText(sub, sx, sy + px * 0.8)
+    if (v === Vis.Active || v === Vis.Learned) {
+      const learned = v === Vis.Learned
+      roundRect(ctx, spot.x - half, spot.y - zhPx * 0.68, half * 2, zhPx * 1.36, zhPx * 0.3)
+      ctx.fillStyle = learned ? 'rgb(255, 236, 170)' : 'rgba(228, 239, 255, 0.96)'
+      ctx.fill()
+      ctx.lineWidth = Math.max(1.2, u * 0.03)
+      ctx.strokeStyle = learned ? 'rgb(176, 124, 20)' : STATUS_COLORS.active
+      ctx.stroke()
+      ctx.font = `700 ${zhPx}px ${FONT_ZH}`
+      ctx.fillStyle = learned ? '#5a3800' : '#17305e'
+      ctx.fillText(text, spot.x, spot.y + zhPx * 0.04)
+    } else {
+      ctx.globalAlpha = dimmed ? (v === Vis.Frontier ? 0.85 : 0.62) : 1
+      ctx.font = `${mystery ? 800 : 600} ${zhPx}px ${mystery ? FONT_UI : FONT_ZH}`
+      ctx.lineWidth = Math.max(2.5, zhPx * 0.2)
+      ctx.strokeStyle = spot.halo
+      ctx.strokeText(text, spot.x, spot.y + zhPx * 0.04)
+      ctx.fillStyle = spot.ink
+      ctx.fillText(text, spot.x, spot.y + zhPx * 0.04)
       ctx.globalAlpha = 1
     }
+    return { i, sx, sy, spot, half }
+  }
+
+  /** Ring on the ground: 2 = selected, 1 = in reach of the player, 0 = hovered. */
+  private drawRing(sx: number, sy: number, W: number, level: number) {
+    const ctx = this.ctx
+    const u = this.cam.scale
+    ctx.beginPath()
+    ctx.ellipse(sx, sy + u * 0.38, Math.max(u * 0.5, W * 0.56), u * 0.2, 0, 0, Math.PI * 2)
+    ctx.fillStyle = level === 2 ? 'rgba(255, 255, 255, 0.55)' : level === 1 ? 'rgba(255, 236, 160, 0.45)' : 'rgba(255, 255, 255, 0.3)'
+    ctx.fill()
+    ctx.lineWidth = level === 2 ? 3 : 2
+    ctx.strokeStyle = level === 2 ? '#16120c' : level === 1 ? '#c98a00' : 'rgba(30, 30, 30, 0.45)'
+    ctx.stroke()
+  }
+
+  // ---- badges and labels, on top of everything ---------------------------
+
+  private drawBadges(t: Transform, drawn: Drawn[]) {
+    const st = this.state!
+    const { pack, view, settings } = st
+    const { world, words } = pack
+    const ctx = this.ctx
+    const u = t.s
+    const zhPx = this.zhPx(u)
+
+    // Fountain label.
+    const [fx, fy] = world.spawn
+    {
+      const sx = t.ox + fx * u
+      const sy = t.oy + fy * u
+      if (sx > -3 * u && sy > -3 * u && sx < this.w + 3 * u && sy < this.h + 3 * u) {
+        this.banner(sx, sy + u * 0.62, ['Start'], [92, 64, 30], Math.max(10, Math.min(15, u * 0.26)))
+      }
+    }
+
+    // Hall banners: the region's name and progress.
+    const [x0, y0, x1, y1] = this.visibleCells(t, 3)
+    for (const r of world.regions) {
+      if (r.x < x0 || r.x > x1 || r.y < y0 || r.y > y1) continue
+      const sx = t.ox + r.x * u
+      const sy = t.oy + r.y * u
+      const learned = view.regionLearned[r.id]
+      const label = `${r.zh} · ${r.en}`
+      const sub = `${this.levelLabel(r.level)} · ★ ${learned}/${r.count}`
+      this.banner(sx, sy + u * 0.56, [label, sub], shade(this.regionRgb[r.id], -0.55), Math.max(11, Math.min(17, u * 0.3)))
+    }
+
+    for (const d of drawn) {
+      const { i, sx, sy, spot, half } = d
+      const v = view.vis[i]
+      const w = words[i]
+      const kind = this.wordKind[i]
+      if (v >= Vis.Revealed && view.due[i]) this.drawQuestMark(sx, sy - LANDMARK_TOP[kind] * u - Math.max(9, u * 0.22), u)
+      if (v === Vis.Learned) this.drawStar(spot.x + half, spot.y - zhPx * 0.62, Math.max(5, zhPx * 0.36))
+      if (v === Vis.Active) this.drawPips(spot.x, spot.y + zhPx * 0.68, zhPx, view.stages[i], view.stageCount)
+      const explored = v >= Vis.Revealed
+      if (settings.mapPinyin && u >= 30 && (explored || settings.fogMode === 'off')) {
+        const pyPx = Math.max(9, Math.min(14, u * 0.22))
+        ctx.font = `600 ${pyPx}px ${FONT_UI}`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'top'
+        ctx.lineJoin = 'round'
+        ctx.lineWidth = 3
+        ctx.strokeStyle = 'rgba(255, 252, 244, 0.9)'
+        ctx.strokeText(w.pinyin, sx, sy + u * 0.48)
+        ctx.fillStyle = '#3d342a'
+        ctx.fillText(w.pinyin, sx, sy + u * 0.48)
+      }
+    }
+
+    // Key hint next to whatever the player can talk to.
+    if (this.keyHints && this.near) {
+      let hx = 0
+      let hy = 0
+      if ('word' in this.near) {
+        const w = words[this.near.word]
+        hx = t.ox + w.x * u + (this.wordW[this.near.word] / 2) * u + u * 0.12
+        hy = t.oy + w.y * u - u * 0.1
+      } else {
+        const r = world.regions[this.near.hall]
+        hx = t.ox + r.x * u + u * 1.15
+        hy = t.oy + r.y * u - u * 0.2
+      }
+      this.keyCap(hx, hy, 'E', Math.max(10, Math.min(15, u * 0.26)))
+    }
+  }
+
+  /** A small sign with one or two lines of text, centered at (x, top). */
+  private banner(x: number, top: number, lines: string[], ink: RGB, px: number) {
+    const ctx = this.ctx
+    const sub = px * 0.72
+    ctx.font = `800 ${px}px ${FONT_ZH}`
+    let bw = ctx.measureText(lines[0]).width
+    if (lines[1]) {
+      ctx.font = `700 ${sub}px ${FONT_UI}`
+      bw = Math.max(bw, ctx.measureText(lines[1]).width)
+    }
+    bw += px * 1.1
+    const bh = px * 1.35 + (lines[1] ? sub * 1.25 : 0)
+    roundRect(ctx, x - bw / 2, top, bw, bh, Math.min(8, px * 0.5))
+    ctx.fillStyle = 'rgba(255, 252, 244, 0.92)'
+    ctx.fill()
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = rgb(ink, 0.7)
+    ctx.stroke()
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    ctx.fillStyle = rgb(ink)
+    ctx.font = `800 ${px}px ${FONT_ZH}`
+    ctx.fillText(lines[0], x, top + px * 0.2)
+    if (lines[1]) {
+      ctx.font = `700 ${sub}px ${FONT_UI}`
+      ctx.fillStyle = rgb(mix(ink, [120, 110, 100], 0.3))
+      ctx.fillText(lines[1], x, top + px * 1.3)
+    }
+  }
+
+  private keyCap(x: number, y: number, key: string, px: number) {
+    const ctx = this.ctx
+    const s = px * 1.5
+    roundRect(ctx, x, y - s / 2, s, s, px * 0.3)
+    ctx.fillStyle = 'rgba(30, 26, 20, 0.85)'
+    ctx.fill()
+    ctx.fillStyle = '#fff'
+    ctx.font = `800 ${px}px ${FONT_UI}`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(key, x + s / 2, y + px * 0.05)
   }
 
   private levelLabel(level: number): string {
     return this.state!.pack.manifest.levels[level - 1]?.label ?? `L${level}`
-  }
-
-  // ---- words --------------------------------------------------------------
-
-  private drawWords(t: Transform) {
-    const st = this.state!
-    const { pack, view, settings } = st
-    const { world, wordAt, words } = pack
-    const { vis, due, stages } = view
-    const { fogMode } = settings
-    const ctx = this.ctx
-    const s = t.s
-    const [x0, y0, x1, y1] = this.visibleCells(t, 1)
-
-    const idx: number[] = []
-    for (let y = Math.max(y0, world.y0); y <= Math.min(y1, world.y0 + world.h - 1); y++) {
-      const row = (y - world.y0) * world.w
-      for (let x = Math.max(x0, world.x0); x <= Math.min(x1, world.x0 + world.w - 1); x++) {
-        const j = wordAt[row + x - world.x0]
-        if (j >= 0 && (this.drawable(j) || j === st.selected)) idx.push(j)
-      }
-    }
-
-    // Landmarks, back to front (row by row).
-    for (const i of idx) {
-      const w = words[i]
-      const sx = t.ox + w.x * s
-      const sy = t.oy + w.y * s
-      const v = vis[i]
-      const unexplored = v <= Vis.Frontier
-      if (i === st.selected || i === st.hovered) this.drawRing(sx, sy, s, i === st.selected)
-      if (v === Vis.Learned || v === Vis.Active || v === Vis.Revealed) this.drawBase(sx, sy, s, v)
-      if (unexplored && fogMode === 'hidden') {
-        this.drawMystery(sx, sy, s)
-        continue
-      }
-      const fogged = unexplored && fogMode !== 'off'
-      ctx.globalAlpha = fogged ? (v === Vis.Frontier ? 0.75 : 0.5) : 1
-      const zoomFactor = 0.86 + Math.min(0.24, Math.max(0, (w.freq - 3) * 0.06))
-      drawLandmark(ctx, this.wordKind[i], sx, sy, s * zoomFactor, {
-        color: this.wordRgb[i],
-        h: this.wordHash[i],
-        muted: fogged ? (v === Vis.Frontier ? 0.45 : 0.7) : 0,
-      })
-      ctx.globalAlpha = 1
-    }
-
-    // Name plates, most important first; skipped where they would overlap.
-    const prio = (i: number) => {
-      const v = vis[i]
-      return (i === st.selected ? 100 : i === st.hovered ? 90 : 0) + (due[i] ? 8 : 0) + v * 2
-    }
-    const order = [...idx].sort((a, b) => prio(b) - prio(a) || a - b)
-    const occ = new Occupancy(this.w, this.h)
-    const zhPx = Math.max(11, Math.min(20, s * 0.34))
-    const pyPx = Math.max(9, Math.min(13, s * 0.22))
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    ctx.lineJoin = 'round'
-    for (const i of order) {
-      const v = vis[i]
-      const forced = i === st.selected || i === st.hovered
-      const explored = v >= Vis.Revealed
-      if (!explored && fogMode === 'hidden') continue
-      const w = words[i]
-      const sx = t.ox + w.x * s
-      const top = t.oy + w.y * s + s * 0.42
-      const withPinyin = settings.mapPinyin && s >= 30 && (explored || fogMode === 'off')
-      const zhW = textWidth(w.hanzi) * zhPx
-      const pyW = withPinyin ? w.pinyin.length * pyPx * 0.56 : 0
-      const plate = explored
-      const padX = plate ? 5 : 2
-      const bw = Math.max(zhW, pyW) + padX * 2
-      const bh = zhPx * 1.18 + (withPinyin ? pyPx * 1.2 : 0) + (plate ? 2 : 0)
-      if (forced) occ.place(sx - bw / 2, top, bw, bh)
-      else if (!occ.tryPlace(sx - bw / 2, top, bw, bh)) continue
-      ctx.globalAlpha = !explored && fogMode !== 'off' ? (v === Vis.Frontier ? 0.75 : 0.55) : 1
-      if (plate) {
-        roundRect(ctx, sx - bw / 2, top, bw, bh, Math.min(6, bh / 2))
-        ctx.fillStyle =
-          v === Vis.Learned ? 'rgba(255, 244, 214, 0.96)' : v === Vis.Active ? 'rgba(232, 240, 255, 0.96)' : 'rgba(255, 253, 247, 0.94)'
-        ctx.fill()
-        ctx.lineWidth = 1.2
-        ctx.strokeStyle =
-          v === Vis.Learned ? STATUS_COLORS.learnedStroke : v === Vis.Active ? STATUS_COLORS.active : rgb(shade(this.wordRgb[i], -0.45))
-        ctx.stroke()
-      }
-      const ty = top + (plate ? 2 : 0)
-      ctx.font = `${v === Vis.Learned ? 700 : 600} ${zhPx}px ${FONT_ZH}`
-      ctx.fillStyle = v === Vis.Learned ? '#6b4300' : '#1f1a14'
-      if (!plate) {
-        ctx.lineWidth = Math.max(2.5, zhPx * 0.22)
-        ctx.strokeStyle = 'rgba(255, 253, 247, 0.9)'
-        ctx.strokeText(w.hanzi, sx, ty)
-      }
-      ctx.fillText(w.hanzi, sx, ty)
-      if (withPinyin) {
-        ctx.font = `500 ${pyPx}px ${FONT_UI}`
-        ctx.fillStyle = '#4a4036'
-        if (!plate) {
-          ctx.lineWidth = 3
-          ctx.strokeText(w.pinyin, sx, ty + zhPx * 1.1)
-        }
-        ctx.fillText(w.pinyin, sx, ty + zhPx * 1.1)
-      }
-      ctx.globalAlpha = 1
-    }
-
-    // Status badges on top.
-    for (const i of idx) {
-      const v = vis[i]
-      if (v < Vis.Revealed) continue
-      const w = words[i]
-      const sx = t.ox + w.x * s
-      const sy = t.oy + w.y * s
-      if (due[i]) this.drawQuestMark(sx, sy - s * 0.66, s)
-      else if (v === Vis.Learned) this.drawStar(sx + s * 0.3, sy - s * 0.36, Math.max(5, s * 0.13))
-      if (v === Vis.Active) this.drawPips(sx - s * 0.46, sy, s, stages[i], view.stageCount)
-    }
-  }
-
-  private drawRing(sx: number, sy: number, s: number, selected: boolean) {
-    const ctx = this.ctx
-    ctx.beginPath()
-    ctx.ellipse(sx, sy + s * 0.34, s * 0.5, s * 0.18, 0, 0, Math.PI * 2)
-    ctx.fillStyle = selected ? 'rgba(255, 255, 255, 0.55)' : 'rgba(255, 255, 255, 0.3)'
-    ctx.fill()
-    ctx.lineWidth = selected ? 3 : 2
-    ctx.strokeStyle = selected ? '#16120c' : 'rgba(30, 30, 30, 0.45)'
-    ctx.stroke()
-  }
-
-  private drawBase(sx: number, sy: number, s: number, v: number) {
-    const ctx = this.ctx
-    ctx.beginPath()
-    ctx.ellipse(sx, sy + s * 0.34, s * 0.4, s * 0.13, 0, 0, Math.PI * 2)
-    if (v === Vis.Learned) {
-      ctx.fillStyle = rgb(GOLD, 0.55)
-      ctx.fill()
-      ctx.lineWidth = 2
-      ctx.strokeStyle = STATUS_COLORS.learnedStroke
-    } else if (v === Vis.Active) {
-      ctx.fillStyle = 'rgba(47, 111, 214, 0.25)'
-      ctx.fill()
-      ctx.lineWidth = 2
-      ctx.strokeStyle = STATUS_COLORS.active
-    } else {
-      ctx.lineWidth = 1.5
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
-    }
-    ctx.stroke()
-  }
-
-  /** Undiscovered word next to explored ones, in "hidden" fog mode. */
-  private drawMystery(sx: number, sy: number, s: number) {
-    const ctx = this.ctx
-    const r = s * 0.26
-    ctx.fillStyle = 'rgba(70, 78, 90, 0.55)'
-    ctx.beginPath()
-    ctx.arc(sx - r * 0.6, sy + r * 0.2, r * 0.8, 0, Math.PI * 2)
-    ctx.arc(sx + r * 0.6, sy + r * 0.2, r * 0.8, 0, Math.PI * 2)
-    ctx.arc(sx, sy - r * 0.25, r, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#ffffff'
-    ctx.font = `800 ${Math.max(10, r * 1.4)}px ${FONT_UI}`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText('?', sx, sy)
   }
 
   /** "!" over a word whose quest is due today, like a quest giver. */
@@ -845,66 +1141,32 @@ export class MapRenderer {
     ctx.stroke()
   }
 
-  private drawPips(x: number, y: number, s: number, done: number, count: number) {
+  /** Stage progress as a row of dots under an active word. */
+  private drawPips(x: number, y: number, zhPx: number, done: number, count: number) {
     const ctx = this.ctx
-    const r = Math.max(2, s * 0.05)
-    const gap = r * 2.8
+    const r = Math.max(2.2, zhPx * 0.13)
+    const gap = r * 2.7
+    const left = x - ((count - 1) * gap) / 2
     for (let k = 0; k < count; k++) {
       ctx.beginPath()
-      ctx.arc(x, y + s * 0.3 - k * gap, r, 0, Math.PI * 2)
-      ctx.fillStyle = k < done ? STATUS_COLORS.learned : 'rgba(255,255,255,0.92)'
+      ctx.arc(left + k * gap, y, r, 0, Math.PI * 2)
+      ctx.fillStyle = k < done ? STATUS_COLORS.learned : '#ffffff'
       ctx.fill()
       ctx.lineWidth = 1
-      ctx.strokeStyle = 'rgba(60, 45, 20, 0.8)'
+      ctx.strokeStyle = STATUS_COLORS.active
       ctx.stroke()
     }
   }
+}
+
+export function sameTarget(a: Target | null, b: Target | null): boolean {
+  if (!a || !b) return a === b
+  if ('word' in a) return 'word' in b && a.word === b.word
+  return 'hall' in b && a.hall === b.hall
 }
 
 function textWidth(s: string): number {
   let n = 0
   for (const ch of s) n += /[\u2e80-\u9fff\uff00-\uffef]/.test(ch) ? 1 : 0.6
   return n
-}
-
-class Occupancy {
-  private rects: number[][] = []
-  private buckets = new Map<number, number[]>()
-  private readonly B = 48
-  private w: number
-  private h: number
-
-  constructor(w: number, h: number) {
-    this.w = w
-    this.h = h
-  }
-
-  private keys(x: number, y: number, w: number, h: number): number[] {
-    const out: number[] = []
-    for (let bx = Math.floor(x / this.B); bx <= Math.floor((x + w) / this.B); bx++)
-      for (let by = Math.floor(y / this.B); by <= Math.floor((y + h) / this.B); by++) out.push((bx + 100) * 4096 + by + 100)
-    return out
-  }
-
-  tryPlace(x: number, y: number, w: number, h: number): boolean {
-    if (x + w < 0 || y + h < 0 || x > this.w || y > this.h) return false
-    for (const k of this.keys(x, y, w, h)) {
-      for (const r of this.buckets.get(k) ?? []) {
-        const o = this.rects[r]
-        if (x < o[0] + o[2] && x + w > o[0] && y < o[1] + o[3] && y + h > o[1]) return false
-      }
-    }
-    this.place(x, y, w, h)
-    return true
-  }
-
-  place(x: number, y: number, w: number, h: number): void {
-    const id = this.rects.length
-    this.rects.push([x, y, w, h])
-    for (const k of this.keys(x, y, w, h)) {
-      let b = this.buckets.get(k)
-      if (!b) this.buckets.set(k, (b = []))
-      b.push(id)
-    }
-  }
 }

@@ -15,6 +15,8 @@ export interface Pack {
   regionWords: number[][]
   /** Word index per grid cell (row-major, same shape as `world.terrain`), -1 where empty. */
   wordAt: Int32Array
+  /** Region id whose hall stands on each grid cell, -1 elsewhere. */
+  hallAt: Int16Array
   baseUrl: string
 }
 
@@ -172,12 +174,17 @@ export function buildPack(manifest: Manifest, world: World, words: Word[], baseU
     const k = cellIndex(world, w.x, w.y)
     if (k >= 0) wordAt[k] = w.i
   }
+  const hallAt = new Int16Array(world.w * world.h).fill(-1)
+  for (const r of world.regions) {
+    const k = cellIndex(world, r.x, r.y)
+    if (k >= 0 && wordAt[k] < 0) hallAt[k] = r.id
+  }
   const order = (a: number, b: number) =>
     words[a].level - words[b].level || words[b].freq - words[a].freq || a - b
   for (const list of charIndex.values()) list.sort(order)
   for (const list of children) list.sort(order)
   for (const list of regionWords) list.sort(order)
-  return { manifest, world, words, byId, children, charIndex, regionWords, wordAt, baseUrl }
+  return { manifest, world, words, byId, children, charIndex, regionWords, wordAt, hallAt, baseUrl }
 }
 
 /** Indices of words within `radius` cells of (x, y), nearest first. */
@@ -210,7 +217,7 @@ async function getJson<T>(url: string): Promise<T> {
 
 export async function loadPack(baseUrl: string): Promise<Pack> {
   const manifest = await getJson<Manifest>(`${baseUrl}manifest.json`)
-  if (manifest.schema !== 2) throw new Error(`Unsupported pack schema ${manifest.schema}`)
+  if (manifest.schema !== 3) throw new Error(`Unsupported pack schema ${manifest.schema}`)
   const [worldFile, wordFile] = await Promise.all([
     getJson<WorldFile>(`${baseUrl}${manifest.files.world}`),
     getJson<RowFile<WordRow>>(`${baseUrl}${manifest.files.words}`),

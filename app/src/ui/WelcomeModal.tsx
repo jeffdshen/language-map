@@ -33,15 +33,16 @@ export function WelcomeModal() {
           <span>🗺️</span>
           <div>
             <b>Every word lives somewhere.</b> All {pack.words.length.toLocaleString()} words of the official HSK
-            syllabus are landmarks and people in {pack.world.regions.length} towns and wilds. HSK 1 is around the
-            fountain in the middle; each level is a ring of towns farther out, and HSK 7–9 is the wilderness.
+            syllabus live in houses, trees, rocks and dunes across {pack.world.regions.length} towns and wilds. HSK 1 is
+            around the fountain in the middle; each level is a ring of towns farther out, and HSK 7–9 is the wilderness.
           </div>
         </li>
         <li>
           <span>🧭</span>
           <div>
-            <b>Location means something.</b> Each town gathers words on a topic, and neighbors share meaning. Walk
-            with <kbd>WASD</kbd> or drag; press <kbd>M</kbd> for the world map and your progress in every region.
+            <b>Walk around.</b> Each town gathers words on a topic, and neighbors share meaning. Walk with{' '}
+            <kbd>WASD</kbd> (or tap where to go), press <kbd>E</kbd> at a word to talk to it, and <kbd>M</kbd> for the
+            world map. Every town has a ⚑ hall where you can train or challenge its master to clear many words at once.
           </div>
         </li>
         <li>
@@ -55,8 +56,8 @@ export function WelcomeModal() {
         <li>
           <span>🌫️</span>
           <div>
-            <b>Explore through the fog.</b> Finishing stages reveals linked words. Click “?” spots, use 🔭 Discover, or
-            search. A soft cap keeps you from opening too many words at once.
+            <b>Explore through the fog.</b> Reveal a word or say you know it; finishing stages uncovers linked words.
+            Press <kbd>N</kbd> to walk to the next new word. A soft cap keeps you from opening too many at once.
           </div>
         </li>
       </ul>

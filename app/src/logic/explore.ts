@@ -39,9 +39,9 @@ const STATUS_VIS: Record<WordStatus, number> = {
 }
 
 /** Hidden words this close (in cells) to a word on the map show up as "?" (the fog lifts around explored words). */
-export const FRONTIER_RADIUS = 3.7
+export const FRONTIER_RADIUS = 5
 /** Neighborhood used when ranking what to discover next. */
-const NEAR_RADIUS = 4.6
+const NEAR_RADIUS = 6.5
 
 const nearCache = new WeakMap<Pack, [number, number][][]>()
 

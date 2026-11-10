@@ -26,18 +26,19 @@ word positions move (the app uses it to tell the player the map changed).
 | `embed.py` | Builds one vector per word: the Numberbatch vector for the Chinese word plus a weighted vector for its English glosses. |
 | `themes.py` | Assigns each word to one of the 17 curated topics in `config/zh-en/themes.json`, using zero-shot similarity to keyword centroids, part-of-speech rules, and two refinement passes. Topics set terrain and town names; they are not regions themselves. |
 | `relate.py` | Finds semantic neighbors (k = 8) and an *anchor* for each word: the best lower-level word by meaning, shared characters (idf-weighted), containment, and topic. |
-| `world.py` | Builds the tile world (see the module docstring and [docs/design.md](../docs/design.md#world-generation)): brick-lattice slots on a wobbly island, a force layout (level → distance from the center, anchors and neighbors pull together, repulsion keeps density even), size-capped regions per level, optimal-transport slot assignment, soft region borders, and terrain. |
+| `world.py` | Builds the tile world (see the module docstring and [docs/design.md](../docs/design.md#world-generation)): Poisson-disk hamlets ("lots") of 1–7 words on a wobbly island, a force layout (level → distance from the center, anchors and neighbors pull together, repulsion keeps density even), size-capped regions per level by optimal transport, quadratic-assignment swaps so related words share a lot, soft region borders, a hall per region, A* roads/trails/bridges, water and terrain. |
 | `sentences.py` | Selects up to 6 Tatoeba sentences per word, preferring ones whose other words are at or below the word's level. Segments them with jieba, disambiguates readings with pypinyin, and keeps only simplified script. |
 | `export.py` | Writes `manifest.json`, `words.json`, `world.json`, `sentences.json` and `legacy-ids.json`, plus `reports/zh-en.md` (counts, region table, density by distance). |
 | `preview.py` | Renders `reports/zh-en-preview.png` (whole world with region labels) and `reports/zh-en-closeup.png` (the center at game scale). |
 
 `uv run pytest` checks, among other things, that the world is deterministic, that no two words
-touch, that every region is one connected piece of a single level within its size cap, and that
-word density never increases outward.
+touch and name plates have room, that every region is one connected piece of a single level
+within its size cap, that word density never increases outward, that halls and the plaza are
+clear of words and water, and that every word and hall can be reached on foot from the plaza.
 
 ## Pack format (`data/<pack>/`)
 
-All files use schema 2. Coordinates are integer grid cells, with the start plaza at (0, 0) and y
+All files use schema 3. Coordinates are integer grid cells, with the start plaza at (0, 0) and y
 pointing down.
 
 - **`manifest.json`**: schema version, `layoutVersion`, `contentHash`, file names, levels (label,
@@ -53,8 +54,10 @@ pointing down.
   - `ground`: ground code → `{name, color}`.
   - `themes`: topic names, colors, biome and place suffix.
   - `regions`: rows of `regionFields` = `id, level, kind (town|wild), theme, zh, en, count, cells,
-    x, y, color`, where `x, y` is the label position.
-  - `terrain`: one string per grid row of ground codes.
+    x, y, color`, where `x, y` is the region's hall (on land, clear of words).
+  - `terrain`: one string per grid row of ground codes. Besides biomes and water (`~` sea, `=`
+    lake), `p` is plaza, `+` road, `,` trail (wilderness) and `b` bridge. Words, halls and the
+    plaza never stand on water.
   - `regionRuns`: per row, run-length `[regionId, length, …]` (-1 = sea).
 - **`sentences.json`**: `rows` of `[id, en_id, en, seg]`.
   - Each `seg` token is one of:

@@ -9,7 +9,8 @@ import { levelLabel, POS_LABEL } from './text'
 
 export function WordPanel() {
   const i = useStore((s) => s.selected)
-  if (i === null) return null
+  const details = useStore((s) => s.details)
+  if (i === null || !details) return null
   return <WordPanelInner key={i} i={i} />
 }
 
@@ -19,7 +20,7 @@ function WordPanelInner({ i }: { i: number }) {
   const openCount = useStore((s) => s.view!.openCount)
   const settings = useStore((s) => s.save.settings)
   const from = useStore((s) => s.selectedFrom)
-  const { select, revealWord, markKnown } = useStore.getState()
+  const { select, revealWord, markKnown, setDetails } = useStore.getState()
   const w = pack.words[i]
   const fog = settings.fogMode
   const discovered = vis >= Vis.Revealed
@@ -28,7 +29,10 @@ function WordPanelInner({ i }: { i: number }) {
 
   return (
     <aside className="panel word-panel" aria-label="Word details">
-      <button type="button" className="icon close" onClick={() => select(null)} aria-label="Close">
+      <button type="button" className="icon back" onClick={() => setDetails(false)} aria-label="Back" title="Back to the quick view">
+        ‹
+      </button>
+      <button type="button" className="icon close" onClick={() => select(null)} aria-label="Close" title="Close (Esc)">
         ×
       </button>
       <header className="word-head" style={{ ['--region' as string]: pack.world.regions[w.region]?.color ?? pack.world.themes[w.theme].color }}>
