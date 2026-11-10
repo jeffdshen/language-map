@@ -93,8 +93,20 @@ export function Dots({
 }) {
   if (marked) return <span className="dots marked">✓ marked</span>
   if (done) have = Math.max(have, need)
+  const n = Math.min(have, need)
+  if (need > 5)
+    return (
+      <span className="dots meter" aria-label={`${n} of ${need}`}>
+        <span className="mini-bar">
+          <span style={{ width: `${(100 * n) / need}%` }} />
+        </span>
+        <span className="num">
+          {n}/{need}
+        </span>
+      </span>
+    )
   return (
-    <span className="dots" aria-label={`${Math.min(have, need)} of ${need} days`}>
+    <span className="dots" aria-label={`${n} of ${need}`}>
       {Array.from({ length: need }, (_, k) => (
         <span key={k} className={k < have ? 'dot on' : 'dot'} />
       ))}

@@ -36,6 +36,8 @@ export interface Word {
   neighbors: number[]
   trad: string
   alts: string[]
+  /** Number of example sentences for this word in sentences.json. */
+  ex: number
 }
 
 export interface LevelInfo {

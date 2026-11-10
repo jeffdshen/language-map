@@ -14,7 +14,7 @@ from .sources import load_lock
 from .words import LEVEL_LABELS, Word, pos_category
 from .world import GROUND, LAYOUT_VERSION, World, region_runs, world_stats
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 WORD_FIELDS = [
     "id",
@@ -32,6 +32,7 @@ WORD_FIELDS = [
     "neighbors",
     "trad",
     "alts",
+    "ex",
 ]
 REGION_FIELDS = ["id", "level", "kind", "theme", "zh", "en", "count", "cells", "x", "y", "color"]
 N_STARTERS = 8
@@ -110,6 +111,7 @@ def export_pack(
                 [int(j) for j in neighbors[i]],
                 w.trad,
                 w.alts,
+                len(by_word[i]),
             ]
         )
     words_hash = _write_lists(out_dir / "words.json", {"fields": WORD_FIELDS}, {"rows": rows})
@@ -276,9 +278,22 @@ def write_report(
             sample = " ".join(w.hanzi for w in by_region.get(r["id"], [])[:8])
             lines.append(f"- {r['zh']} {r['en']}: {sample}")
         lines.append("")
-    lines += ["## Sentence coverage", "", "| Level | Words with sentences |", "|---|---|"]
-    for lvl, (have, total) in manifest["stats"]["sentences"]["coverage_by_level"].items():
-        lines.append(f"| {LEVEL_LABELS[int(lvl)]} | {have}/{total} ({100 * have / total:.0f}%) |")
+    sstats = manifest["stats"]["sentences"]
+    lines += [
+        "## Sentence coverage",
+        "",
+        "Sentences are ordered easiest first; *easy* means every other word in the sentence is",
+        "at or below the word's level.",
+        "",
+        "| Level | Words with sentences | Sentences per word | Easy |",
+        "|---|---|---|---|",
+    ]
+    for lvl, (have, total) in sstats["coverage_by_level"].items():
+        n, easy = sstats["easy_by_level"][lvl]
+        lines.append(
+            f"| {LEVEL_LABELS[int(lvl)]} | {have}/{total} ({100 * have / total:.0f}%) "
+            f"| {n / total:.1f} | {100 * easy / max(1, n):.0f}% |"
+        )
     lines += ["", "## Starters", "", ", ".join(words[i].hanzi for i in manifest["starters"]), ""]
     lines += ["## Stats", "", "```json", json.dumps(manifest["stats"], indent=1), "```", ""]
     path.parent.mkdir(parents=True, exist_ok=True)

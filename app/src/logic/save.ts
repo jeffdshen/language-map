@@ -1,7 +1,9 @@
-import { STAGE_COUNT, type Progress, type QuestMode, type WordProgress } from './progress'
+import { activeStages, STAGE_COUNT, type Progress, type QuestMode, type Rules, type SentenceKind, type WordProgress } from './progress'
 
 export type FogMode = 'off' | 'dim' | 'hidden'
 export type FogScope = 'words' | 'terrain'
+/** Pinyin under words on the map: auto = until a region's listening quests are done (always in listening mode). */
+export type MapPinyin = 'auto' | 'always' | 'never'
 
 export interface Settings {
   /** off: all words bright · dim: unexplored words faded · hidden: unexplored words invisible ("?" at the frontier). */
@@ -10,31 +12,31 @@ export interface Settings {
   questMode: QuestMode
   /** Whether fog also covers terrain far from explored words. */
   fogScope: FogScope
-  /** Successful days needed to finish a stage. */
-  daysPerStage: number
-  /** Soft cap on open (revealed but not learned) words; auto-reveal pauses at the cap. */
-  openCap: number
+  /** Sentences to collect for each sentence stage of a word. */
+  sentencesPerStage: number
   /** Reveal linked words automatically when you finish stages. */
   autoReveal: boolean
-  /** Show pinyin under characters on the map. */
-  mapPinyin: boolean
+  mapPinyin: MapPinyin
   /** Text-to-speech rate (0.5–1.5). */
   ttsRate: number
-  /** Learning day starts at this local hour. */
-  rolloverHour: number
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   fogMode: 'dim',
   questMode: 'full',
   fogScope: 'words',
-  daysPerStage: 3,
-  openCap: 25,
+  sentencesPerStage: 10,
   autoReveal: true,
-  mapPinyin: true,
+  mapPinyin: 'auto',
   ttsRate: 0.85,
-  rolloverHour: 4,
 }
+
+export function rulesOf(settings: Settings): Rules {
+  return { sentences: settings.sentencesPerStage, count: activeStages(settings.questMode) }
+}
+
+/** Tatoeba ids of sentences already collected, per kind (a repeat collect only credits the quest word). */
+export type Collected = Record<SentenceKind, number[]>
 
 export interface SaveData {
   format: 'language-map-save'
@@ -45,6 +47,7 @@ export interface SaveData {
   welcomed: boolean
   settings: Settings
   progress: Progress
+  collected: Collected
   updatedAt: string
 }
 
@@ -57,13 +60,18 @@ export function newSave(pack: string, layoutVersion: number): SaveData {
     welcomed: false,
     settings: { ...DEFAULT_SETTINGS },
     progress: {},
+    collected: { listen: [], read: [] },
     updatedAt: new Date(0).toISOString(),
   }
 }
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/
 
-function cleanWord(raw: unknown): WordProgress | null {
+/**
+ * Validate a word record. Older saves counted good days per stage (`days`); each day becomes one point, and
+ * stages that had reached `oldDays` (the save's days-per-stage setting) stay done.
+ */
+function cleanWord(raw: unknown, oldDays: number): WordProgress | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   const stagesRaw = Array.isArray(r.stages) ? r.stages : []
@@ -72,8 +80,10 @@ function cleanWord(raw: unknown): WordProgress | null {
     const days = Array.isArray(sp.days)
       ? [...new Set(sp.days.filter((d): d is string => typeof d === 'string' && DAY.test(d)))].sort()
       : []
-    const out: WordProgress['stages'][number] = { days }
+    const n = typeof sp.n === 'number' && Number.isFinite(sp.n) ? Math.max(0, Math.floor(sp.n)) : days.length
+    const out: WordProgress['stages'][number] = { n }
     if (typeof sp.completed === 'string' && DAY.test(sp.completed)) out.completed = sp.completed
+    else if (typeof sp.n !== 'number' && days.length >= oldDays) out.completed = days[oldDays - 1]
     if (sp.marked === true) out.marked = true
     return out
   })
@@ -94,13 +104,21 @@ export function cleanSettings(raw: unknown): Settings {
     fogMode: r.fogMode === 'off' || r.fogMode === 'dim' || r.fogMode === 'hidden' ? r.fogMode : d.fogMode,
     questMode: r.questMode === 'listening' || r.questMode === 'full' ? r.questMode : d.questMode,
     fogScope: r.fogScope === 'terrain' || r.fogScope === 'words' ? r.fogScope : d.fogScope,
-    daysPerStage: Math.round(clamp(r.daysPerStage, 1, 10, d.daysPerStage)),
-    openCap: Math.round(clamp(r.openCap, 3, 500, d.openCap)),
+    sentencesPerStage: Math.round(clamp(r.sentencesPerStage, 1, 30, d.sentencesPerStage)),
     autoReveal: typeof r.autoReveal === 'boolean' ? r.autoReveal : d.autoReveal,
-    mapPinyin: typeof r.mapPinyin === 'boolean' ? r.mapPinyin : d.mapPinyin,
+    mapPinyin:
+      r.mapPinyin === 'auto' || r.mapPinyin === 'always' || r.mapPinyin === 'never'
+        ? r.mapPinyin
+        : r.mapPinyin === false
+          ? 'never'
+          : d.mapPinyin,
     ttsRate: clamp(r.ttsRate, 0.5, 1.5, d.ttsRate),
-    rolloverHour: Math.round(clamp(r.rolloverHour, 0, 12, d.rolloverHour)),
   }
+}
+
+function cleanIds(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return []
+  return [...new Set(raw.filter((v): v is number => Number.isInteger(v) && v > 0))]
 }
 
 /** Validate and normalize a save (from storage or an imported file). Throws on foreign files. */
@@ -112,11 +130,14 @@ export function parseSave(raw: unknown, pack: string, knownIds?: Set<string>): S
   if (r.pack !== pack) throw new Error(`Save is for pack "${String(r.pack)}", expected "${pack}"`)
   const progress: Progress = {}
   const rawProgress = (r.progress && typeof r.progress === 'object' ? r.progress : {}) as Record<string, unknown>
+  const rawSettings = (r.settings && typeof r.settings === 'object' ? r.settings : {}) as Record<string, unknown>
+  const oldDays = Math.round(clamp(rawSettings.daysPerStage, 1, 10, 3))
   for (const [id, wp] of Object.entries(rawProgress)) {
     if (knownIds && !knownIds.has(id)) continue
-    const clean = cleanWord(wp)
+    const clean = cleanWord(wp, oldDays)
     if (clean) progress[id] = clean
   }
+  const rawCollected = (r.collected && typeof r.collected === 'object' ? r.collected : {}) as Record<string, unknown>
   return {
     format: 'language-map-save',
     version: 1,
@@ -125,6 +146,7 @@ export function parseSave(raw: unknown, pack: string, knownIds?: Set<string>): S
     welcomed: r.welcomed === true,
     settings: cleanSettings(r.settings),
     progress,
+    collected: { listen: cleanIds(rawCollected.listen), read: cleanIds(rawCollected.read) },
     updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : new Date(0).toISOString(),
   }
 }
@@ -142,7 +164,7 @@ function earliest(a: unknown, b: unknown): string | undefined {
   return xs[0]
 }
 
-/** Merge two raw word records that map to the same new id (union of practice days). */
+/** Merge two raw word records that map to the same new id (union of practice days / sum of points). */
 function mergeRaw(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
   const sa = Array.isArray(a.stages) ? (a.stages as Record<string, unknown>[]) : []
   const sb = Array.isArray(b.stages) ? (b.stages as Record<string, unknown>[]) : []
@@ -151,6 +173,7 @@ function mergeRaw(a: Record<string, unknown>, b: Record<string, unknown>): Recor
     const y = sb[s] ?? {}
     const days = [...(Array.isArray(x.days) ? x.days : []), ...(Array.isArray(y.days) ? y.days : [])]
     const out: Record<string, unknown> = { days }
+    if (typeof x.n === 'number' || typeof y.n === 'number') out.n = (Number(x.n) || 0) + (Number(y.n) || 0)
     const completed = earliest(x.completed, y.completed)
     if (completed) out.completed = completed
     if (x.marked === true || y.marked === true) out.marked = true

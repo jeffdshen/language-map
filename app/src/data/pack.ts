@@ -42,6 +42,7 @@ type WordRow = [
   number[],
   string,
   string[],
+  number,
 ]
 
 const WORD_FIELDS = [
@@ -60,6 +61,7 @@ const WORD_FIELDS = [
   'neighbors',
   'trad',
   'alts',
+  'ex',
 ]
 
 const REGION_FIELDS = ['id', 'level', 'kind', 'theme', 'zh', 'en', 'count', 'cells', 'x', 'y', 'color']
@@ -102,6 +104,7 @@ export function decodeWords(file: RowFile<WordRow>): Word[] {
     neighbors: r[12],
     trad: r[13],
     alts: r[14],
+    ex: r[15],
   }))
 }
 
@@ -225,7 +228,7 @@ function dataUrl(baseUrl: string, manifest: Manifest, file: string): string {
 
 export async function loadPack(baseUrl: string): Promise<Pack> {
   const manifest = await getJson<Manifest>(`${baseUrl}manifest.json`, { cache: 'no-cache' })
-  if (manifest.schema !== 3) throw new Error(`Unsupported pack schema ${manifest.schema}`)
+  if (manifest.schema !== 4) throw new Error(`Unsupported pack schema ${manifest.schema}`)
   const [worldFile, wordFile] = await Promise.all([
     getJson<WorldFile>(dataUrl(baseUrl, manifest, manifest.files.world)),
     getJson<RowFile<WordRow>>(dataUrl(baseUrl, manifest, manifest.files.words)),
@@ -256,6 +259,12 @@ export function legacyMap(data: LegacyIds): Map<string, string> {
 }
 
 let sentencePromise: Promise<SentenceData> | null = null
+let sentenceData: SentenceData | null = null
+
+/** The example sentences, if already loaded. */
+export function loadedSentences(): SentenceData | null {
+  return sentenceData
+}
 
 export function loadSentences(pack: Pack): Promise<SentenceData> {
   if (!sentencePromise) {
@@ -268,6 +277,7 @@ export function loadSentences(pack: Pack): Promise<SentenceData> {
         ),
         byWord: file.byWord ?? [],
       }))
+      .then((d) => (sentenceData = d))
       .catch((err) => {
         sentencePromise = null
         throw err

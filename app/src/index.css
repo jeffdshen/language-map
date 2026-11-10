@@ -407,14 +407,15 @@ select {
   white-space: nowrap;
 }
 
-.stat.due {
-  background: #fff6cc;
-  border-color: #e9c84a;
+.stat:hover {
+  background: var(--paper-2);
+  border-color: #c9b88f;
 }
 
-.stat.warn {
-  background: #fdeee0;
-  border-color: #eab58a;
+.stat.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
 }
 
 .stat-icon {
@@ -438,12 +439,6 @@ select {
   font-weight: 600;
   background: #fff6cc;
   border-color: #e9c84a;
-}
-
-.explore-btn.over {
-  background: #fff;
-  border-color: var(--line);
-  font-weight: 400;
 }
 
 /* ---------- map overlays ---------- */
@@ -1521,79 +1516,11 @@ table.sources td {
   font-size: 0.9rem;
 }
 
-/* ---------- quest modal ---------- */
-
-.quest {
-  width: min(620px, 100%);
-}
-
-.quest-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.quest-stages {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 10px;
-  flex-wrap: wrap;
-}
-
-.stage-tab {
-  padding: 4px 10px;
-  font-size: 0.85rem;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.stage-tab.on {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: #fff;
-}
-
-.stage-tab.done:not(.on) {
-  background: #fff4d6;
-}
-
-.quest-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  font-size: 0.88rem;
-}
-
-.quest-card {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 18px;
-  min-height: 200px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.goal {
-  font-weight: 600;
-  color: var(--ink-soft);
-}
-
-.listen {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  align-items: center;
-  padding: 10px 0;
-}
+/* ---------- quest card (popover and hall sentences) ---------- */
 
 .play {
-  font-size: 1.15rem;
-  padding: 12px 22px;
+  font-size: 1.05rem;
+  padding: 8px 18px;
   border-radius: 999px;
   background: var(--accent);
   color: #fff;
@@ -1608,113 +1535,205 @@ table.sources td {
   background: #fff;
   color: var(--accent-ink);
   border-color: var(--accent);
+  padding: 8px 12px;
 }
 
 .play.slow:hover {
   background: #eef3fd;
 }
 
-.pinyin-prompt {
-  text-align: center;
-}
-
-.big-pinyin {
-  font-size: 1.5rem;
-  color: var(--ink);
-  padding: 6px 0;
-}
-
-.toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.85rem;
-  color: var(--ink-soft);
-  align-self: center;
-}
-
-.read-sentence {
-  text-align: center;
-  padding: 10px 0;
-}
-
-.read-sentence .sentence {
-  font-size: 1.6rem;
-}
-
-.read-word {
-  text-align: center;
-  font-size: 4.2rem;
-  font-weight: 600;
-  padding: 10px 0;
-  letter-spacing: 0.05em;
-}
-
-.answer {
-  border-top: 1px dashed var(--line);
-  padding-top: 12px;
+.qc {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
-.answer-word {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.answer-word .zh {
-  font-size: 2rem;
-  font-weight: 600;
-}
-
-.answer-word .py {
-  font-size: 1.15rem;
-  color: var(--ink-soft);
-}
-
-.answer-sentence {
-  background: var(--paper);
-  border-radius: 10px;
+.qc-body {
+  display: grid;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 10px 12px;
 }
 
-.answer-sentence .en {
-  color: var(--ink-soft);
-  margin: 4px 0;
+.qc-body.collected {
+  background: #fffbea;
+  border-color: #ecd9a0;
 }
 
-.quest-actions {
+.qc-listen {
   display: flex;
-  justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.quest-card.result {
   align-items: center;
-  text-align: center;
   justify-content: center;
+  gap: 8px;
+  padding: 4px 0;
 }
 
-.celebrate {
+.qc-pinyin {
+  flex-basis: 100%;
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+.qc-listen .hint {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: center;
+}
+
+.qc-sentence {
+  font-size: 1.25rem;
+  line-height: 1.6;
+}
+
+.qc-sentence .en,
+.qc-body > .en {
+  font-size: 0.92rem;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+
+.qc-goal {
+  margin: 0;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.qc-goal .play {
+  padding: 4px 12px;
+}
+
+.qc-answer {
+  font-size: 1rem;
+}
+
+.qc-answer b {
   font-size: 1.3rem;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--ink);
+  margin-right: 4px;
 }
 
-.quest-card.result .dots .dot {
-  width: 14px;
-  height: 14px;
+.qc-reward {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.88rem;
 }
 
-.revealed-list {
+.qc-reward .plus {
+  font-weight: 800;
+  color: #8a5a00;
+  margin-right: 2px;
+}
+
+.reward-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  background: #eef3fd;
+  border-color: #b9cdf3;
+  color: #17305e;
+}
+
+.reward-chip.finished {
+  background: #e3f5e1;
+  border-color: #9fd19a;
+  color: #1f5a1a;
+}
+
+.reward-chip.learned {
+  background: #fff1c2;
+  border-color: #d9a933;
+  color: #5a3800;
+  font-weight: 700;
+}
+
+.pop-level {
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+  margin-left: 2px;
+}
+
+.hall-sentences {
   display: grid;
+  gap: 10px;
+}
+
+.hall-sentences-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- quest log tabs ---------- */
+
+.log-tabs {
+  display: flex;
   gap: 6px;
-  justify-items: center;
+  margin: 0 0 6px;
+}
+
+.log-tabs button {
+  flex: 1;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.9rem;
+}
+
+.log-tabs button.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+.mini-bar {
+  display: inline-block;
+  width: 46px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--paper-3);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.mini-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.dots.meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.level-bars .lv-btn {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 58px 1fr 76px;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.82rem;
+  padding: 3px 6px;
+  background: transparent;
+  border-color: transparent;
+  text-align: left;
+}
+
+.level-bars .lv-btn:hover,
+.level-bars .lv-btn.on {
+  background: var(--paper);
+  border-color: var(--line);
 }
 
 /* ---------- small screens: panels become bottom sheets ---------- */
@@ -2158,7 +2177,7 @@ ul.region-list {
   bottom: 14px;
   transform: translateX(-50%);
   z-index: 20;
-  width: min(620px, calc(100vw - 24px));
+  width: min(680px, calc(100vw - 24px));
   background: rgba(251, 246, 234, 0.97);
   border: 1px solid var(--line);
   border-top: 4px solid var(--region);
@@ -2274,24 +2293,6 @@ ul.region-list {
   margin-left: 6px;
 }
 
-.pop-sentence {
-  margin-top: 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: #fff;
-  border: 1px solid var(--line);
-  font-size: 1.05rem;
-}
-
-.pop-sentence .en {
-  font-size: 0.88rem;
-  color: var(--ink-soft);
-}
-
-.pop-sentence button.link {
-  font-size: 0.85rem;
-}
-
 .pop-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2303,7 +2304,7 @@ ul.region-list {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 12px;
+  padding: 7px 10px;
 }
 
 .pop-actions .ic {

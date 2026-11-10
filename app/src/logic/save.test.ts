@@ -6,19 +6,46 @@ describe('save', () => {
     const save = newSave('zh-en', 1)
     save.progress['L1-0001'] = {
       revealed: '2024-01-01',
-      stages: [
-        { days: ['2024-01-02', '2024-01-01', '2024-01-01'], completed: '2024-01-02' },
-        { days: [], marked: true },
-        { days: [], completed: 'nope' },
-        { days: [] },
-      ],
+      stages: [{ n: 4, completed: '2024-01-02' }, { n: 0, marked: true }, { n: -3, completed: 'nope' }, { n: 2.7 }],
     }
+    save.collected.listen.push(5, 5, 9)
     const parsed = parseSave(JSON.parse(JSON.stringify(save)), 'zh-en')
-    expect(parsed.progress['L1-0001'].stages[0].days).toEqual(['2024-01-01', '2024-01-02'])
-    expect(parsed.progress['L1-0001'].stages[0].completed).toBe('2024-01-02')
-    expect(parsed.progress['L1-0001'].stages[1].marked).toBe(true)
-    expect(parsed.progress['L1-0001'].stages[2]).toEqual({ days: [] })
+    const stages = parsed.progress['L1-0001'].stages
+    expect(stages[0]).toEqual({ n: 4, completed: '2024-01-02' })
+    expect(stages[1]).toEqual({ n: 0, marked: true })
+    expect(stages[2]).toEqual({ n: 0 })
+    expect(stages[3]).toEqual({ n: 2 })
+    expect(parsed.collected).toEqual({ listen: [5, 9], read: [] })
     expect(parsed.settings).toEqual(DEFAULT_SETTINGS)
+  })
+
+  it('turns good days from older saves into points', () => {
+    const save = {
+      ...newSave('zh-en', 1),
+      settings: { daysPerStage: 2 },
+      progress: {
+        'L1-0001': {
+          revealed: '2024-01-01',
+          started: '2024-01-01',
+          stages: [
+            { days: ['2024-01-03', '2024-01-01', '2024-01-01'] },
+            { days: ['2024-01-04'] },
+            { days: [], marked: true },
+            { days: ['2024-01-05'], completed: '2024-01-05' },
+          ],
+        },
+      },
+    }
+    const parsed = parseSave(save, 'zh-en')
+    const stages = parsed.progress['L1-0001'].stages
+    // Two separate days reached the old requirement of 2, so the stage stays done.
+    expect(stages[0]).toEqual({ n: 2, completed: '2024-01-03' })
+    expect(stages[1]).toEqual({ n: 1 })
+    expect(stages[2]).toEqual({ n: 0, marked: true })
+    expect(stages[3]).toEqual({ n: 1, completed: '2024-01-05' })
+    expect(parsed.progress['L1-0001'].started).toBe('2024-01-01')
+    expect(parsed.collected).toEqual({ listen: [], read: [] })
+    expect('daysPerStage' in parsed.settings).toBe(false)
   })
 
   it('rejects foreign files and drops unknown words', () => {
@@ -31,11 +58,15 @@ describe('save', () => {
   })
 
   it('clamps settings', () => {
-    const save = { ...newSave('zh-en', 1), settings: { daysPerStage: 99, fogMode: 'weird', openCap: 1 } }
+    const save = { ...newSave('zh-en', 1), settings: { sentencesPerStage: 99, fogMode: 'weird', mapPinyin: 'sometimes' } }
     const s = parseSave(save, 'zh-en').settings
-    expect(s.daysPerStage).toBe(10)
+    expect(s.sentencesPerStage).toBe(30)
     expect(s.fogMode).toBe(DEFAULT_SETTINGS.fogMode)
-    expect(s.openCap).toBe(3)
+    expect(s.mapPinyin).toBe('auto')
+    expect(parseSave({ ...save, settings: { sentencesPerStage: 0 } }, 'zh-en').settings.sentencesPerStage).toBe(1)
+    // The old on/off pinyin switch.
+    expect(parseSave({ ...save, settings: { mapPinyin: false } }, 'zh-en').settings.mapPinyin).toBe('never')
+    expect(parseSave({ ...save, settings: { mapPinyin: true } }, 'zh-en').settings.mapPinyin).toBe('auto')
   })
 
   it('defaults to dim fog and full quests, and keeps listening mode', () => {
@@ -70,7 +101,7 @@ describe('save', () => {
     expect(Object.keys(parsed.progress).sort()).toEqual(['w00001', 'w00009'])
     const wp = parsed.progress.w00001
     expect(wp.revealed).toBe('2024-01-01')
-    expect(wp.stages[0].days).toEqual(['2024-01-01', '2024-01-03'])
+    expect(wp.stages[0].n).toBe(2)
     expect(wp.stages[0].completed).toBe('2024-01-05')
     expect(wp.stages[1].marked).toBe(true)
     expect(hasLegacyIds(newSave('zh-en', 2))).toBe(false)

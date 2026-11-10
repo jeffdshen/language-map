@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Vis } from '../logic/explore'
 import { search } from '../logic/search'
-import { useStore } from '../store'
+import { useStore, type LogTab } from '../store'
 import { levelLabel } from './text'
 
 export function TopBar() {
   const view = useStore((s) => s.view!)
-  const cap = useStore((s) => s.save.settings.openCap)
   const total = useStore((s) => s.pack!.words.length)
   const { setModal, setQuestLog, discover } = useStore.getState()
   const questLogOpen = useStore((s) => s.questLogOpen)
+  const logTab = useStore((s) => s.logTab)
   const questMode = useStore((s) => s.save.settings.questMode)
   const updateSettings = useStore((s) => s.updateSettings)
-  const over = view.openCount >= cap
+  const toggleLog = (tab: LogTab) => setQuestLog(!(questLogOpen && logTab === tab), tab)
+  const on = (tab: LogTab) => (questLogOpen && logTab === tab ? 'on' : '')
 
   return (
     <header className="topbar">
@@ -24,35 +25,35 @@ export function TopBar() {
       <div className="stats">
         <button
           type="button"
-          className={`stat ${view.dueCount ? 'due' : ''}`}
-          onClick={() => setQuestLog(!questLogOpen)}
-          title="Quest log (Q)"
+          className={`stat ${on('open')}`}
+          onClick={() => toggleLog('open')}
+          title="Open words: discovered but not learned yet. Click for the quest log (Q)."
+          aria-pressed={!!on('open')}
         >
-          <span className="stat-icon">❗</span>
-          <span>
-            <b>{view.dueCount}</b>
-            <span className="stat-label"> due</span>
-          </span>
-        </button>
-        <span className={`stat ${over ? 'warn' : ''}`} title="Open words: discovered but not learned yet (soft cap)">
           <span className="stat-icon">🧭</span>
           <span>
-            <b>{view.openCount}</b>/{cap}
+            <b>{view.openCount}</b>
             <span className="stat-label"> open</span>
           </span>
-        </span>
-        <span className="stat" title={`Learned ${view.learnedCount} of ${total} words`}>
+        </button>
+        <button
+          type="button"
+          className={`stat ${on('learned')}`}
+          onClick={() => toggleLog('learned')}
+          title={`Learned ${view.learnedCount} of ${total} words. Click to see them.`}
+          aria-pressed={!!on('learned')}
+        >
           <span className="stat-icon">⭐</span>
           <span>
             <b>{view.learnedCount}</b>
             <span className="stat-label"> learned</span>
           </span>
-        </span>
+        </button>
         <button
           type="button"
-          className={`explore-btn ${over ? 'over' : ''}`}
+          className="explore-btn"
           onClick={discover}
-          title={over ? 'You are at the soft cap — you can still discover more.' : 'Reveal the best next word to learn'}
+          title="Reveal the best next word to learn"
           aria-label="Discover a new word"
         >
           🔭<span className="btn-label"> Discover</span>

@@ -1052,14 +1052,26 @@ export class MapRenderer {
       const v = view.vis[i]
       const w = words[i]
       const kind = this.wordKind[i]
-      if (v >= Vis.Revealed && view.due[i]) this.drawQuestMark(sx, sy - LANDMARK_TOP[kind] * u - Math.max(9, u * 0.22), u)
+      // "!" marks a quest waiting to be picked up: on the map, no points yet.
+      if (v === Vis.Revealed) this.drawQuestMark(sx, sy - LANDMARK_TOP[kind] * u - Math.max(9, u * 0.22), u)
       if (v === Vis.Learned) this.drawStar(spot.x + half, spot.y - zhPx * 0.62, Math.max(5, zhPx * 0.36))
       if (v === Vis.Active) this.drawPips(spot.x, spot.y + zhPx * 0.68, zhPx, view.stages[i], view.stageCount)
-      const explored = v >= Vis.Revealed
-      // The second label: pinyin under the characters, or the characters under the pinyin when
-      // listening.
-      if (settings.mapPinyin && u >= 30 && (explored || settings.fogMode === 'off')) {
-        const listening = settings.questMode === 'listening'
+      if (u < 30) continue
+      const listening = settings.questMode === 'listening'
+      const unexplored = v <= Vis.Frontier
+      if (unexplored && settings.fogMode === 'hidden') continue
+      // The second label: pinyin under the characters (characters under the pinyin when listening). On "auto",
+      // pinyin shows under every word of a region until its listening quests are all done.
+      const r = w.region >= 0 ? world.regions[w.region] : undefined
+      const show =
+        settings.mapPinyin === 'always'
+          ? true
+          : settings.mapPinyin === 'never'
+            ? false
+            : listening
+              ? !unexplored
+              : !r || view.regionHeard[r.id] < r.count
+      if (show) {
         const sub = listening ? w.hanzi : w.pinyin
         const subPx = Math.max(9, Math.min(listening ? 16 : 14, u * (listening ? 0.26 : 0.22)))
         ctx.font = `600 ${subPx}px ${listening ? FONT_ZH : FONT_UI}`
@@ -1068,9 +1080,11 @@ export class MapRenderer {
         ctx.lineJoin = 'round'
         ctx.lineWidth = 3
         ctx.strokeStyle = 'rgba(255, 252, 244, 0.9)'
+        ctx.globalAlpha = unexplored && settings.fogMode === 'dim' ? (v === Vis.Frontier ? 0.8 : 0.55) : 1
         ctx.strokeText(sub, sx, sy + u * 0.48)
         ctx.fillStyle = '#3d342a'
         ctx.fillText(sub, sx, sy + u * 0.48)
+        ctx.globalAlpha = 1
       }
     }
 
@@ -1138,7 +1152,7 @@ export class MapRenderer {
     return this.state!.pack.manifest.levels[level - 1]?.label ?? `L${level}`
   }
 
-  /** "!" over a word whose quest is due today, like a quest giver. */
+  /** "!" over a discovered word with no points yet, like a quest giver. */
   private drawQuestMark(x: number, y: number, s: number) {
     const ctx = this.ctx
     const r = Math.max(7, Math.min(12, s * 0.2))

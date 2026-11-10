@@ -13,9 +13,9 @@ export const STAGES: readonly StageInfo[] = [
   {
     key: 'listen-sentence',
     icon: '👂',
-    title: 'Hear it in a sentence',
-    short: 'Hear · sentence',
-    goal: 'Listen to a sentence and understand what the word means in it.',
+    title: 'Hear it in sentences',
+    short: 'Hear · sentences',
+    goal: 'Collect sentences you understand by ear.',
     usesSentence: true,
   },
   {
@@ -23,15 +23,15 @@ export const STAGES: readonly StageInfo[] = [
     icon: '🗣️',
     title: 'Hear it alone',
     short: 'Hear · word',
-    goal: 'Hear the word (or read its pinyin) and recall the meaning.',
+    goal: 'Hear just the word and recall the meaning.',
     usesSentence: false,
   },
   {
     key: 'read-sentence',
     icon: '📖',
-    title: 'Read it in a sentence',
-    short: 'Read · sentence',
-    goal: 'Read a sentence in characters and understand the word in it.',
+    title: 'Read it in sentences',
+    short: 'Read · sentences',
+    goal: 'Collect sentences you can read in characters.',
     usesSentence: true,
   },
   {
@@ -44,10 +44,14 @@ export const STAGES: readonly StageInfo[] = [
   },
 ]
 
+/** Sentence stages credited by collecting a sentence: by ear, or by reading. */
+export type SentenceKind = 'listen' | 'read'
+export const KIND_STAGE: Record<SentenceKind, number> = { listen: 0, read: 2 }
+
 export interface StageProgress {
-  /** Distinct learning days (YYYY-MM-DD) with a successful practice. */
-  days: string[]
-  /** Day the stage was finished through practice; it stays done if days-per-stage is raised later. */
+  /** Points earned: sentences collected (sentence stages) or checks passed (word-alone stages). */
+  n: number
+  /** Day the stage was finished; it stays done if the requirement is raised later. */
   completed?: string
   /** Self-marked as done (honor system). */
   marked?: boolean
@@ -56,7 +60,7 @@ export interface StageProgress {
 export interface WordProgress {
   /** Day the word was revealed on the map. */
   revealed?: string
-  /** Day the quest was accepted. */
+  /** Day the word earned its first point. */
   started?: string
   stages: StageProgress[]
 }
@@ -66,55 +70,70 @@ export type Progress = Record<string, WordProgress>
 
 export type WordStatus = 'hidden' | 'revealed' | 'active' | 'learned'
 
-export function emptyWordProgress(): WordProgress {
-  return { stages: Array.from({ length: STAGE_COUNT }, () => ({ days: [] })) }
-}
-
-export function stageDone(sp: StageProgress | undefined, need: number): boolean {
-  return !!sp && (!!sp.marked || !!sp.completed || sp.days.length >= need)
-}
-
 /**
  * Quest mode: how many stages count, starting from the first. Listening-only play counts the two listening
- * stages; full play counts all four. Practice on other stages is still recorded either way.
+ * stages; full play counts all four. Progress on other stages is still recorded either way.
  */
 export type QuestMode = 'full' | 'listening'
+
+export interface Rules {
+  /** Sentences to collect per sentence stage. */
+  sentences: number
+  /** Stages that count (2 in listening mode, 4 in full mode). */
+  count: number
+}
 
 export function activeStages(mode: QuestMode): number {
   return mode === 'listening' ? 2 : STAGE_COUNT
 }
 
-export function stagesDone(wp: WordProgress | undefined, need: number, count = STAGE_COUNT): number {
+/**
+ * Points needed per stage for a word with `ex` example sentences. Word-alone stages take one check; sentence
+ * stages take `sentences` collects (a word's own sentences loop when it has fewer), or a single word-alone
+ * check when it has no example sentences at all.
+ */
+export function stageNeeds(ex: number, sentences: number): number[] {
+  const s = ex > 0 ? sentences : 1
+  return [s, 1, s, 1]
+}
+
+export function emptyWordProgress(): WordProgress {
+  return { stages: Array.from({ length: STAGE_COUNT }, () => ({ n: 0 })) }
+}
+
+export function stageDone(sp: StageProgress | undefined, need: number): boolean {
+  return !!sp && (!!sp.marked || !!sp.completed || sp.n >= need)
+}
+
+export function stagesDone(wp: WordProgress | undefined, needs: readonly number[], count = STAGE_COUNT): number {
   if (!wp) return 0
   let n = 0
-  for (let s = 0; s < count; s++) if (stageDone(wp.stages[s], need)) n++
+  for (let s = 0; s < count; s++) if (stageDone(wp.stages[s], needs[s])) n++
   return n
 }
 
-export function isLearned(wp: WordProgress | undefined, need: number, count = STAGE_COUNT): boolean {
-  return !!wp && stagesDone(wp, need, count) === count
+export function isLearned(wp: WordProgress | undefined, needs: readonly number[], count = STAGE_COUNT): boolean {
+  return !!wp && stagesDone(wp, needs, count) === count
 }
 
 /** First counted stage that is not done yet, or -1 when the word is learned. */
-export function currentStage(wp: WordProgress | undefined, need: number, count = STAGE_COUNT): number {
+export function currentStage(wp: WordProgress | undefined, needs: readonly number[], count = STAGE_COUNT): number {
   if (!wp) return 0
-  for (let s = 0; s < count; s++) if (!stageDone(wp.stages[s], need)) return s
+  for (let s = 0; s < count; s++) if (!stageDone(wp.stages[s], needs[s])) return s
   return -1
 }
 
-export function wordStatus(wp: WordProgress | undefined, need: number, count = STAGE_COUNT): WordStatus {
+/** Listening stages (the first two) are done. */
+export function heard(wp: WordProgress | undefined, needs: readonly number[]): boolean {
+  return stagesDone(wp, needs, 2) === 2
+}
+
+export function wordStatus(wp: WordProgress | undefined, needs: readonly number[], count = STAGE_COUNT): WordStatus {
   if (!wp) return 'hidden'
-  if (isLearned(wp, need, count)) return 'learned'
+  if (isLearned(wp, needs, count)) return 'learned'
   if (wp.started) return 'active'
   if (wp.revealed) return 'revealed'
   return 'hidden'
-}
-
-/** Active word whose current stage has not had a success today. */
-export function isDue(wp: WordProgress | undefined, need: number, today: string, count = STAGE_COUNT): boolean {
-  if (!wp?.started) return false
-  const cur = currentStage(wp, need, count)
-  return cur >= 0 && !wp.stages[cur].days.includes(today)
 }
 
 function edit(progress: Progress, id: string, fn: (wp: WordProgress) => WordProgress): Progress {
@@ -127,54 +146,33 @@ export function reveal(progress: Progress, id: string, today: string): Progress 
   return edit(progress, id, (wp) => ({ ...wp, revealed: today }))
 }
 
-export function startQuest(progress: Progress, id: string, today: string): Progress {
-  if (progress[id]?.started) return progress
-  return edit(progress, id, (wp) => ({ ...wp, revealed: wp.revealed ?? today, started: today }))
-}
-
-export function stopQuest(progress: Progress, id: string): Progress {
-  if (!progress[id]?.started) return progress
-  return edit(progress, id, (wp) => {
-    const next = { ...wp }
-    delete next.started
-    return next
-  })
-}
-
-/** Record a successful practice. Only one success per stage per day counts. */
-export function recordSuccess(
-  progress: Progress,
-  id: string,
-  stage: number,
-  today: string,
-  need: number,
-): { progress: Progress; counted: boolean } {
-  const wp = progress[id]
-  if (wp?.stages[stage]?.days.includes(today)) return { progress, counted: false }
-  const next = edit(progress, id, (w) => ({
+/** Add one point to a stage (revealing and starting the word). The stage locks in as done once it reaches `need`. */
+export function credit(progress: Progress, id: string, stage: number, today: string, need: number): Progress {
+  return edit(progress, id, (w) => ({
     ...w,
     revealed: w.revealed ?? today,
     started: w.started ?? today,
     stages: w.stages.map((sp, s) => {
       if (s !== stage) return sp
-      const days = [...sp.days, today]
-      return !sp.completed && days.length >= need ? { ...sp, days, completed: today } : { ...sp, days }
+      const n = sp.n + 1
+      return !sp.completed && n >= need ? { ...sp, n, completed: today } : { ...sp, n }
     }),
   }))
-  return { progress: next, counted: true }
 }
 
-/** Lock in stages already finished under `need`, so raising days-per-stage never undoes progress. */
-export function lockCompleted(progress: Progress, need: number): Progress {
+/**
+ * Lock in stages already finished under the old requirements, so raising sentences-per-stage never undoes
+ * progress. `needsOf` gives a word's per-stage needs under the old rules.
+ */
+export function lockCompleted(progress: Progress, needsOf: (id: string) => readonly number[] | null, today: string): Progress {
   let out: Progress | null = null
   for (const [id, wp] of Object.entries(progress)) {
-    if (!wp.stages.some((sp) => !sp.completed && sp.days.length >= need)) continue
+    const needs = needsOf(id)
+    if (!needs || !wp.stages.some((sp, s) => !sp.completed && sp.n >= needs[s])) continue
     out ??= { ...progress }
     out[id] = {
       ...wp,
-      stages: wp.stages.map((sp) =>
-        !sp.completed && sp.days.length >= need ? { ...sp, completed: [...sp.days].sort()[need - 1] } : sp,
-      ),
+      stages: wp.stages.map((sp, s) => (!sp.completed && sp.n >= needs[s] ? { ...sp, completed: today } : sp)),
     }
   }
   return out ?? progress

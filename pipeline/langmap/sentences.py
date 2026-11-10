@@ -1,8 +1,12 @@
 """Example sentence selection from Tatoeba (deterministic).
 
-For each word, choose up to N sentences that contain it as a segmented token and
-whose other words are mostly at or below the word's HSK level. Sentences must
-be in simplified characters and have an English translation.
+For each word, choose up to N sentences that contain it as a segmented token,
+easiest first: sentences whose other words are all at or below the word's HSK level
+come before ones that need harder words. Sentences must be in simplified characters
+and have an English translation.
+
+The app's sentence quests credit every HSK word in a sentence, so easy sentences
+matter twice: they are the ones a learner at that level can actually understand.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from .pinyin import strip_tones
 from .sources import fetch
 from .words import Word
 
-MAX_PER_WORD = 6
+MAX_PER_WORD = 10
 HAN = re.compile(r"[\u3400-\u9fff]")
 ALLOWED = re.compile(r"^[\u3400-\u9fff\u3007，。！？、；：“”‘’（）《》…—·0-9０-９ ]+$")
 UNKNOWN_LEVEL = 8
@@ -106,7 +110,7 @@ def select_sentences(
         lv = [char_levels.get(ch, UNKNOWN_LEVEL) for ch in t if HAN.match(ch)]
         return min(UNKNOWN_LEVEL, max(lv) + (1 if len(t) > 1 else 0))
 
-    candidates: dict[int, list[tuple[float, int, int]]] = {}
+    candidates: dict[int, list[tuple[float, int, int, bool]]] = {}
     sentences: list[Sentence] = []
     seg_cache: list[list[tuple[str, str, int]]] = []
     for c, zh, e, en in rows:
@@ -147,15 +151,21 @@ def select_sentences(
             difficulty = sum(over) / k + 0.6 * sum(1 for o in over if o > 0) / k
             lo, hi = (4, 14) if L <= 3 else (6, 20)
             length_pen = 0.04 * (max(0, lo - n_han) + max(0, n_han - hi))
-            candidates.setdefault(wi, []).append((round(difficulty + length_pen, 6), n_han, s_idx))
+            easy = not any(over)
+            candidates.setdefault(wi, []).append(
+                (round(difficulty + length_pen, 6), n_han, s_idx, easy)
+            )
 
     by_word: list[list[int]] = [[] for _ in words]
+    easy_count = [0] * len(words)
     used: dict[int, int] = {}
     for wi in sorted(candidates):
         chosen: list[int] = []
         seen_zh: set[str] = set()
         seen_en: set[str] = set()
-        for _, _, s_idx in sorted(candidates[wi], key=lambda x: (x[0], x[1], sentences[x[2]].id)):
+        for _, _, s_idx, easy in sorted(
+            candidates[wi], key=lambda x: (x[0], x[1], sentences[x[2]].id)
+        ):
             s = sentences[s_idx]
             key_zh = re.sub(r"[^\u3400-\u9fff]", "", s.zh)
             key_en = s.en.lower().strip(" .!?")
@@ -164,6 +174,7 @@ def select_sentences(
             seen_zh.add(key_zh)
             seen_en.add(key_en)
             chosen.append(s_idx)
+            easy_count[wi] += easy
             if len(chosen) >= MAX_PER_WORD:
                 break
         by_word[wi] = chosen
@@ -190,6 +201,14 @@ def select_sentences(
             str(lvl): [
                 sum(1 for w in words if w.level == lvl and out_by_word[w.index]),
                 sum(1 for w in words if w.level == lvl),
+            ]
+            for lvl in range(1, 8)
+        },
+        # Per level: [sentences chosen, of which every other word is at or below the level].
+        "easy_by_level": {
+            str(lvl): [
+                sum(len(out_by_word[w.index]) for w in words if w.level == lvl),
+                sum(easy_count[w.index] for w in words if w.level == lvl),
             ]
             for lvl in range(1, 8)
         },

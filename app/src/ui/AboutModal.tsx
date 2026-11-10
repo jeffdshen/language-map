@@ -4,6 +4,7 @@ import { Modal } from './common'
 export function AboutModal() {
   const modal = useStore((s) => s.modal)
   const manifest = useStore((s) => s.pack!.manifest)
+  const settings = useStore((s) => s.save.settings)
   const setModal = useStore((s) => s.setModal)
   if (modal !== 'about') return null
   return (
@@ -19,16 +20,21 @@ export function AboutModal() {
               in every region.
             </li>
             <li>
-              Walk up to a landmark and press <kbd>E</kbd> (or click it). New words just ask: <b>👁 Reveal</b> or{' '}
-              <b>✓ Know it</b>. Discovered words offer a quest, an example sentence, or <b>📖 Details</b> for the full
-              page. Number keys pick the options; <kbd>N</kbd> walks you to the next new word in the town.
+              Walk up to a landmark and press <kbd>E</kbd> (or click it): it plays (or shows) a sentence with the word
+              right away. <kbd>E</kbd> always does the main thing — <b>✓ Collect</b> if you understood it.{' '}
+              <kbd>Space</kbd> shows the answer, <kbd>K</kbd> says you already know the word, <kbd>X</kbd> picks another
+              sentence, <kbd>I</kbd> opens the full details and <kbd>N</kbd> walks you to the next word. A new word
+              only joins your map once you earn a point on it.
             </li>
             <li>
-              Accept a word's <b>quest</b>, then each day do its current stage from the ❗ quest log. Only one good day
-              per stage counts each day.
+              <b>Sentences are multi-reward quests.</b> Collecting one gives a point to every word in it; showing the
+              answer gives the point to this word only (you can still collect the rest afterwards). Sentence stages
+              need {settings.sentencesPerStage} points (Settings) — words with fewer sentences just loop them. The
+              “alone” stages are a single check of the word by itself.
             </li>
             <li>
-              Every region has a <b>⚑ hall</b>. <b>🏋️ Train</b> runs the quests due in that region; <b>⚔️ Challenge</b>{' '}
+              Every region has a <b>⚑ hall</b>. <b>💬 Sentences</b> deals random sentences from its words;{' '}
+              <b>⚔️ Challenge</b>{' '}
               quizzes you on its words (by sound in listening-only mode) and clears each one you get right, so you can
               skip what you already know. Words you miss go onto your map.
             </li>
@@ -43,10 +49,11 @@ export function AboutModal() {
               appears, or search.
             </li>
             <li>
-              Keys: <kbd>WASD</kbd> walk · <kbd>E</kbd> talk · <kbd>1</kbd>–<kbd>4</kbd> choose · <kbd>N</kbd> next
-              word · <kbd>C</kbd> center · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>M</kbd> world map · <kbd>/</kbd>{' '}
-              search · <kbd>Q</kbd> quest log · <kbd>H</kbd> back to the start · <kbd>Esc</kbd> close ·
-              in quests <kbd>Space</kbd> replay, <kbd>Enter</kbd> continue.
+              Keys: <kbd>WASD</kbd> walk · <kbd>E</kbd> talk / collect / continue · <kbd>Space</kbd> show answer ·{' '}
+              <kbd>K</kbd> know it · <kbd>X</kbd> another sentence · <kbd>I</kbd> details · <kbd>R</kbd> replay ·{' '}
+              <kbd>N</kbd> next word · <kbd>C</kbd> center · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>M</kbd> world map ·{' '}
+              <kbd>/</kbd> search · <kbd>Q</kbd> quest log · <kbd>H</kbd> back to the start · <kbd>Esc</kbd> close.
+              Click 🧭 open or ⭐ learned in the top bar for your lists.
             </li>
           </ul>
         </section>

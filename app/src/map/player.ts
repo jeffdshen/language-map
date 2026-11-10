@@ -6,6 +6,9 @@ import type { Facing, PlayerSprite, Target } from './renderer'
 /** Cells per second. */
 export const WALK_SPEED = 6
 export const RUN_SPEED = 11
+/** Click-to-walk trips longer than a few cells speed up so that none takes much longer than this (seconds). */
+export const TRIP_TIME = 1.1
+const MAX_PATH_SPEED = 160
 /** How close (in cells) the player must be to talk to a landmark. */
 export const REACH = 1.75
 /** Halls are bigger, so they can be entered from a little farther away. */
@@ -25,6 +28,8 @@ export class Player implements PlayerSprite {
   step = 0
   moving = false
   private path: [number, number][] = []
+  /** Constant speed for the current path, set from its full length (so there's no slowdown near the end). */
+  private pathSpeed = WALK_SPEED
   private arrive: (() => void) | null = null
   private readonly grid: WalkGrid
 
@@ -48,6 +53,7 @@ export class Player implements PlayerSprite {
     const path = findPath(this.grid, this.x, this.y, tx, ty)
     if (!path) return false
     this.path = path
+    this.pathSpeed = pathSpeed(path.length)
     this.arrive = arrive ?? null
     if (!path.length) this.finish()
     return true
@@ -80,8 +86,7 @@ export class Player implements PlayerSprite {
       ;[this.x, this.y] = moveBody(this.grid, this.x, this.y, (input.dx / len) * v, (input.dy / len) * v)
       this.face(input.dx, input.dy)
     } else if (this.path.length) {
-      // Long walks speed up so no trip takes much more than a couple of seconds.
-      let budget = Math.max(WALK_SPEED, Math.min(40, this.path.length / 2.2)) * dt
+      let budget = this.pathSpeed * dt
       while (budget > 0 && this.path.length) {
         const [tx, ty] = this.path[0]
         const dx = tx - this.x
@@ -119,6 +124,11 @@ export class Player implements PlayerSprite {
   }
 }
 
+/** Cells per second for a click-to-walk trip of `cells` steps: walking pace for short hops, faster for long trips. */
+export function pathSpeed(cells: number): number {
+  return Math.max(WALK_SPEED, Math.min(MAX_PATH_SPEED, cells / TRIP_TIME))
+}
+
 /** The landmark or hall within reach of (x, y), nearest first. */
 export function nearTarget(pack: Pack, view: MapView, hiddenFog: boolean, x: number, y: number): Target | null {
   const { world, wordAt, hallAt } = pack
@@ -147,20 +157,34 @@ export function nearTarget(pack: Pack, view: MapView, hiddenFog: boolean, x: num
   return best
 }
 
-/** The nearest word in `region` that isn't explored yet (straight-line distance). */
-export function nextUnexplored(pack: Pack, view: MapView, region: number, x: number, y: number): number | null {
-  let best: number | null = null
-  let bestD = Infinity
-  for (const i of pack.regionWords[region] ?? []) {
-    if (view.vis[i] >= Vis.Revealed) continue
-    const w = pack.words[i]
-    const d = Math.hypot(w.x - x, w.y - y)
-    if (d < bestD) {
-      bestD = d
-      best = i
+/**
+ * The next word to work on in `region`: the nearest one not on the map yet, else the nearest unfinished one.
+ * Words in `avoid` (just visited) are skipped unless nothing else is left.
+ */
+export function nextQuestWord(
+  pack: Pack,
+  view: MapView,
+  region: number,
+  x: number,
+  y: number,
+  avoid: readonly number[] = [],
+): number | null {
+  const pick = (skip: readonly number[]) => {
+    let best: number | null = null
+    let bestD = Infinity
+    for (const i of pack.regionWords[region] ?? []) {
+      const v = view.vis[i]
+      if (v === Vis.Learned || skip.includes(i)) continue
+      const w = pack.words[i]
+      const d = Math.hypot(w.x - x, w.y - y) + (v >= Vis.Revealed ? 1e6 : 0)
+      if (d < bestD) {
+        bestD = d
+        best = i
+      }
     }
+    return best
   }
-  return best
+  return pick(avoid) ?? pick(avoid.slice(-1))
 }
 
 interface SavedPlayer {

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import type { QuestMode } from '../logic/progress'
-import type { FogMode, FogScope } from '../logic/save'
+import type { FogMode, FogScope, MapPinyin } from '../logic/save'
 import { useStore } from '../store'
 import { speak } from '../tts'
 import { Modal } from './common'
@@ -84,13 +84,13 @@ export function SettingsModal() {
               <option value="terrain">Words and terrain</option>
             </select>
           </label>
-          <label className="field check">
-            <input
-              type="checkbox"
-              checked={settings.mapPinyin}
-              onChange={(e) => updateSettings({ mapPinyin: e.target.checked })}
-            />
-            <span>Show a second label under words on the map (pinyin; characters in listening mode)</span>
+          <label className="field">
+            <span>Pinyin under words on the map (characters under the pinyin in listening mode)</span>
+            <select value={settings.mapPinyin} onChange={(e) => updateSettings({ mapPinyin: e.target.value as MapPinyin })}>
+              <option value="auto">Auto — until you finish a region's listening quests</option>
+              <option value="always">Always</option>
+              <option value="never">Never</option>
+            </select>
           </label>
         </section>
         <section>
@@ -103,25 +103,12 @@ export function SettingsModal() {
             </select>
           </label>
           <label className="field">
-            <span>Good days needed per stage</span>
-            <select
-              value={settings.daysPerStage}
-              onChange={(e) => updateSettings({ daysPerStage: Number(e.target.value) })}
-            >
-              {Array.from({ length: 10 }, (_, k) => k + 1).map((n) => (
-                <option key={n} value={n}>
-                  {n} {n === 1 ? 'day' : 'days'}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Soft cap on open words</span>
+            <span>Sentences needed per sentence stage (any sentence you collect counts for every word in it)</span>
             <NumberField
-              min={3}
-              max={500}
-              value={settings.openCap}
-              onCommit={(n) => updateSettings({ openCap: n })}
+              min={1}
+              max={30}
+              value={settings.sentencesPerStage}
+              onCommit={(n) => updateSettings({ sentencesPerStage: n })}
             />
           </label>
           <label className="field check">
@@ -130,20 +117,7 @@ export function SettingsModal() {
               checked={settings.autoReveal}
               onChange={(e) => updateSettings({ autoReveal: e.target.checked })}
             />
-            <span>Reveal linked words when I finish a stage (stops at the cap)</span>
-          </label>
-          <label className="field">
-            <span>New day starts at</span>
-            <select
-              value={settings.rolloverHour}
-              onChange={(e) => updateSettings({ rolloverHour: Number(e.target.value) })}
-            >
-              {Array.from({ length: 13 }, (_, h) => (
-                <option key={h} value={h}>
-                  {String(h).padStart(2, '0')}:00
-                </option>
-              ))}
-            </select>
+            <span>Reveal linked words when I finish a stage</span>
           </label>
           <label className="field">
             <span>Speech rate ({settings.ttsRate.toFixed(2)})</span>

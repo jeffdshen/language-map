@@ -43,6 +43,21 @@ export function rng(seed: number): () => number {
   }
 }
 
+/**
+ * Words for a hall's random sentences: the region's unlearned words that have example sentences, shuffled (all of
+ * its words with sentences once everything is learned, for practice).
+ */
+export function sentenceQueue(pack: Pack, view: MapView, region: number, rand: () => number): number[] {
+  const withEx = (pack.regionWords[region] ?? []).filter((i) => pack.words[i].ex > 0)
+  const open = withEx.filter((i) => view.vis[i] !== Vis.Learned)
+  const out = open.length ? open : withEx
+  for (let k = out.length - 1; k > 0; k--) {
+    const j = Math.floor(rand() * (k + 1))
+    ;[out[k], out[j]] = [out[j], out[k]]
+  }
+  return out
+}
+
 export interface BossQuestion {
   word: number
   /** Word indices whose (short) glosses are the choices, in display order. */

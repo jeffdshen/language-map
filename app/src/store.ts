@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { loadLegacyIds, loadPack, regionAt, type Pack } from './data/pack'
+import type { Sentence } from './data/types'
 import { dayKey } from './logic/dates'
 import {
   autoRevealPicks,
@@ -17,6 +18,7 @@ import {
   migrateLegacyIds,
   newSave,
   parseSave,
+  rulesOf,
   type SaveData,
   type Settings,
 } from './logic/save'
@@ -43,11 +45,18 @@ export interface CameraRequest {
   seq: number
 }
 
-export interface QuestState {
-  word: number
-  stage: number
-  /** Training in a region's hall: "next quest" stays in that region. */
-  region?: number
+export type LogTab = 'open' | 'learned'
+
+/** What a collect or check earned. */
+export interface Reward {
+  /** Words that gained a point. */
+  credited: number[]
+  /** Words whose stage was finished by it. */
+  finished: number[]
+  /** Words learned by it. */
+  learned: number[]
+  /** Words newly revealed nearby (auto-reveal after the quest word finishes a stage). */
+  revealed: number[]
 }
 
 interface State {
@@ -69,8 +78,8 @@ interface State {
   /** Bumped to ask the map to walk to the next unexplored word nearby. */
   nextSeq: number
   modal: Modal
-  quest: QuestState | null
   questLogOpen: boolean
+  logTab: LogTab
   toasts: Toast[]
   camera: CameraRequest | null
   /** Region the player is in (-1 at sea). */
@@ -94,19 +103,21 @@ interface Actions {
   setDetails(open: boolean): void
   openHall(region: number): void
   closeHall(): void
-  /** Walk to the nearest unexplored word in the current region. */
+  /** Walk to the next word to work on in the current region. */
   nextWord(): void
   openChar(ch: string): void
   setModal(m: Modal): void
-  setQuestLog(open: boolean): void
-  openQuest(i: number, stage?: number, region?: number): void
-  closeQuest(): void
+  setQuestLog(open: boolean, tab?: LogTab): void
   revealWord(i: number): void
   revealNextWithChar(ch: string, exclude?: number): void
   discover(): void
-  startQuest(i: number): void
-  stopQuest(i: number): void
-  practiceSuccess(i: number, stage: number): { counted: boolean; stageFinished: boolean; learned: boolean; revealed: number[] }
+  /**
+   * Collect a sentence for quest word `focus`: +1 on the sentence stage of `kind` for every HSK word in it the
+   * first time the sentence is collected (only `focus` on repeats). Words in `skip` (already credited) are left out.
+   */
+  collect(focus: number, sentence: Sentence, kind: P.SentenceKind, skip?: number[]): Reward
+  /** +1 on one stage of one word (show answer, or a word-alone check). */
+  creditWord(i: number, stage: number): Reward
   markStage(i: number, stage: number, marked: boolean): void
   /** Mark a word as known; `quiet` skips the toast (and returns the words it uncovered). */
   markKnown(i: number, quiet?: boolean): number[]
@@ -128,14 +139,20 @@ let cameraSeq = 0
 /** Last player position reported by the map (not reactive; used to discover words "near you"). */
 let focus: [number, number] = [0, 0]
 
-/** [days per stage, counted stages] for the current settings. */
-function rules(settings: Settings): [number, number] {
-  return [settings.daysPerStage, P.activeStages(settings.questMode)]
+function view(pack: Pack, progress: P.Progress, settings: Settings): MapView {
+  return computeView(pack, progress, rulesOf(settings))
 }
 
-function view(pack: Pack, progress: P.Progress, settings: Settings, today: string): MapView {
-  const [need, count] = rules(settings)
-  return computeView(pack, progress, need, today, count)
+const collectedSets = new WeakMap<number[], Set<number>>()
+
+/** Whether sentence `id` is in a collected-ids list (cached as a set per list). */
+export function isCollected(list: number[], id: number): boolean {
+  let set = collectedSets.get(list)
+  if (!set) {
+    set = new Set(list)
+    collectedSets.set(list, set)
+  }
+  return set.has(id)
 }
 
 /** Rename word ids from the pre-2025 word list, if the save has any. */
@@ -157,12 +174,12 @@ function migrationNote(moved: number, lost: number): string | null {
 export const useStore = create<Store>()((set, get) => {
   /** Apply a new progress map: recompute the view and persist. */
   function commit(progress: P.Progress, extra: Partial<SaveData> = {}) {
-    const { pack, save, today } = get()
+    const { pack, save } = get()
     if (!pack) return
     // Strictly increasing stamps, even if the clock steps back, so newer progress always wins across tabs.
     const now = Math.max(Date.now(), Date.parse(save.updatedAt) + 1 || 0)
     const next: SaveData = { ...save, ...extra, progress, updatedAt: new Date(now).toISOString() }
-    set({ save: next, view: view(pack, progress, next.settings, today) })
+    set({ save: next, view: view(pack, progress, next.settings), today: dayKey() })
     scheduleWrite(pack.manifest.pack, next)
   }
 
@@ -188,8 +205,7 @@ export const useStore = create<Store>()((set, get) => {
       }
       if (next.updatedAt <= get().save.updatedAt) return
       cancelPendingWrite()
-      const today = dayKey(new Date(), next.settings.rolloverHour)
-      set({ save: next, today, view: view(pack, next.progress, next.settings, today) })
+      set({ save: next, view: view(pack, next.progress, next.settings) })
     }
     onExternalSave((p, updatedAt) => {
       const { pack, save, saveError } = get()
@@ -203,24 +219,43 @@ export const useStore = create<Store>()((set, get) => {
     })
   }
 
-  /** Reveal up to `count` words linked to `from`, within the soft cap. */
+  /** Reveal up to `count` words linked to `from`. */
   function autoReveal(progress: P.Progress, from: number, count: number): { progress: P.Progress; revealed: number[] } {
     const { pack, save, today } = get()
     if (!pack || !save.settings.autoReveal) return { progress, revealed: [] }
-    const picks = autoRevealPicks(pack, view(pack, progress, save.settings, today), from, count, save.settings.openCap)
+    const picks = autoRevealPicks(pack, view(pack, progress, save.settings), from, count)
     let p = progress
     for (const j of picks) p = P.reveal(p, pack.words[j].id, today)
     return { progress: p, revealed: picks }
   }
 
-  function capWarning() {
-    const { view, save } = get()
-    if (view && view.openCount >= save.settings.openCap) {
-      get().toast(
-        `You have ${view.openCount} open words (soft cap ${save.settings.openCap}). Finishing some first helps them stick.`,
-        'warn',
-      )
+  function needs(i: number, settings: Settings): number[] {
+    return P.stageNeeds(word(i).ex, settings.sentencesPerStage)
+  }
+
+  /** Add a point on `stage` to each word in `targets` that still needs it; auto-reveal after the focus word's progress. */
+  function award(targets: number[], stage: number, focus: number, extra: Partial<SaveData> = {}): Reward {
+    const { save, today } = get()
+    const { count } = rulesOf(save.settings)
+    let progress = save.progress
+    const reward: Reward = { credited: [], finished: [], learned: [], revealed: [] }
+    for (const j of targets) {
+      const id = word(j).id
+      const nd = needs(j, save.settings)
+      const before = progress[id]
+      if (P.stageDone(before?.stages[stage], nd[stage]) || P.isLearned(before, nd, count)) continue
+      progress = P.credit(progress, id, stage, today, nd[stage])
+      reward.credited.push(j)
+      if (P.stageDone(progress[id].stages[stage], nd[stage])) reward.finished.push(j)
+      if (P.isLearned(progress[id], nd, count)) reward.learned.push(j)
     }
+    if (reward.learned.includes(focus) || reward.finished.includes(focus)) {
+      const r = autoReveal(progress, focus, reward.learned.includes(focus) ? 2 : 1)
+      progress = r.progress
+      reward.revealed = r.revealed
+    }
+    if (reward.credited.length || Object.keys(extra).length) commit(progress, extra)
+    return reward
   }
 
   return {
@@ -238,8 +273,8 @@ export const useStore = create<Store>()((set, get) => {
     hall: null,
     nextSeq: 0,
     modal: null,
-    quest: null,
     questLogOpen: false,
+    logTab: 'open',
     toasts: [],
     camera: null,
     here: -1,
@@ -268,7 +303,7 @@ export const useStore = create<Store>()((set, get) => {
           saveError += ' Changes in this session will not be saved.'
           disableWrites()
         }
-        const today = dayKey(new Date(), save.settings.rolloverHour)
+        const today = dayKey()
         if (Object.keys(save.progress).length === 0) {
           for (const i of pack.manifest.starters) save.progress = P.reveal(save.progress, pack.words[i].id, today)
         }
@@ -282,7 +317,7 @@ export const useStore = create<Store>()((set, get) => {
         set({
           pack,
           save,
-          view: view(pack, save.progress, save.settings, today),
+          view: view(pack, save.progress, save.settings),
           today,
           here: regionAt(pack.world, focus[0], focus[1]),
           searchIndex: buildSearchIndex(pack.words),
@@ -299,11 +334,8 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     tick() {
-      const { pack, save, today } = get()
-      const now = dayKey(new Date(), save.settings.rolloverHour)
-      if (pack && now !== today) {
-        set({ today: now, view: view(pack, save.progress, save.settings, now) })
-      }
+      const now = dayKey()
+      if (now !== get().today) set({ today: now })
     },
 
     select(i, from = 'map', fly = false) {
@@ -370,26 +402,13 @@ export const useStore = create<Store>()((set, get) => {
       set({ modal })
     },
 
-    setQuestLog(open) {
-      set({ questLogOpen: open })
-    },
-
-    openQuest(i, stage, region) {
-      const { save } = get()
-      const wp = save.progress[word(i).id]
-      const [need, count] = rules(save.settings)
-      const cur = P.currentStage(wp, need, count)
-      set({ quest: { word: i, stage: stage ?? (cur < 0 ? count - 1 : cur), region } })
-    },
-
-    closeQuest() {
-      set({ quest: null })
+    setQuestLog(open, tab) {
+      set(tab ? { questLogOpen: open, logTab: tab } : { questLogOpen: open })
     },
 
     revealWord(i) {
       const { save, today } = get()
       commit(P.reveal(save.progress, word(i).id, today))
-      capWarning()
     },
 
     revealNextWithChar(ch, exclude) {
@@ -419,44 +438,30 @@ export const useStore = create<Store>()((set, get) => {
       get().select(picks[0], 'link', true)
     },
 
-    startQuest(i) {
-      const { save, today } = get()
-      commit(P.startQuest(save.progress, word(i).id, today))
+    collect(focus, sentence, kind, skip = []) {
+      const { save } = get()
+      const repeat = isCollected(save.collected[kind], sentence.id)
+      const targets = [focus]
+      if (!repeat) for (const tok of sentence.seg) if (tok.length >= 2 && (tok[1] as number) >= 0) targets.push(tok[1] as number)
+      const uniq = [...new Set(targets)].filter((j) => !skip.includes(j))
+      const extra: Partial<SaveData> = repeat
+        ? {}
+        : { collected: { ...save.collected, [kind]: [...save.collected[kind], sentence.id] } }
+      return award(uniq, P.KIND_STAGE[kind], focus, extra)
     },
 
-    stopQuest(i) {
-      commit(P.stopQuest(get().save.progress, word(i).id))
-    },
-
-    practiceSuccess(i, stage) {
-      const { save, today } = get()
-      const [need, count] = rules(save.settings)
-      const id = word(i).id
-      const before = save.progress[id]
-      const doneBefore = P.stageDone(before?.stages[stage], need)
-      const learnedBefore = P.isLearned(before, need, count)
-      const r = P.recordSuccess(save.progress, id, stage, today, need)
-      let progress = r.progress
-      const after = progress[id]
-      const stageFinished = !doneBefore && P.stageDone(after.stages[stage], need)
-      const learned = !learnedBefore && P.isLearned(after, need, count)
-      let revealed: number[] = []
-      if (stageFinished || learned) {
-        const res = autoReveal(progress, i, learned ? 2 : 1)
-        progress = res.progress
-        revealed = res.revealed
-      }
-      if (r.counted) commit(progress)
-      return { counted: r.counted, stageFinished, learned, revealed }
+    creditWord(i, stage) {
+      return award([i], stage, i)
     },
 
     markStage(i, stage, marked) {
       const { save, today } = get()
-      const [need, count] = rules(save.settings)
+      const { count } = rulesOf(save.settings)
+      const nd = needs(i, save.settings)
       const id = word(i).id
-      const learnedBefore = P.isLearned(save.progress[id], need, count)
+      const learnedBefore = P.isLearned(save.progress[id], nd, count)
       let progress = P.setStageMarked(save.progress, id, stage, marked, today)
-      if (!learnedBefore && P.isLearned(progress[id], need, count)) {
+      if (!learnedBefore && P.isLearned(progress[id], nd, count)) {
         progress = autoReveal(progress, i, 2).progress
       }
       commit(progress)
@@ -465,7 +470,7 @@ export const useStore = create<Store>()((set, get) => {
     markKnown(i, quiet = false) {
       const { save, today } = get()
       const id = word(i).id
-      const wasLearned = P.isLearned(save.progress[id], ...rules(save.settings))
+      const wasLearned = P.isLearned(save.progress[id], needs(i, save.settings), rulesOf(save.settings).count)
       let progress = P.markKnown(save.progress, id, today)
       let revealed: number[] = []
       if (!wasLearned) ({ progress, revealed } = autoReveal(progress, i, 2))
@@ -487,29 +492,37 @@ export const useStore = create<Store>()((set, get) => {
       if (!pack) return 0
       let progress = save.progress
       let n = 0
+      const { count } = rulesOf(save.settings)
       for (const w of pack.words) {
-        if (w.level > maxLevel || P.isLearned(progress[w.id], ...rules(save.settings))) continue
+        if (w.level > maxLevel || P.isLearned(progress[w.id], needs(w.i, save.settings), count)) continue
         progress = P.markKnown(progress, w.id, today)
         n++
       }
       // Open a few fresh threads just beyond what is known.
-      const v = view(pack, progress, save.settings, today)
-      const room = Math.max(0, Math.min(10, save.settings.openCap - v.openCount))
-      for (const j of revealCandidates(pack, v, null, room)) progress = P.reveal(progress, pack.words[j].id, today)
+      const v = view(pack, progress, save.settings)
+      for (const j of revealCandidates(pack, v, null, 10)) progress = P.reveal(progress, pack.words[j].id, today)
       commit(progress)
       return n
     },
 
     updateSettings(patch) {
-      const { pack, save } = get()
+      const { pack, save, today } = get()
       const settings = cleanSettings({ ...save.settings, ...patch })
-      const today = dayKey(new Date(), settings.rolloverHour)
-      set({ today })
-      const progress =
-        settings.daysPerStage !== save.settings.daysPerStage
-          ? P.lockCompleted(save.progress, save.settings.daysPerStage)
-          : save.progress
-      if (pack) commit(progress, { settings })
+      if (!pack) return
+      // Stages finished under the old requirement stay finished.
+      let progress = save.progress
+      if (settings.sentencesPerStage !== save.settings.sentencesPerStage) {
+        const byId = new Map(pack.words.map((w) => [w.id, w]))
+        progress = P.lockCompleted(
+          progress,
+          (id) => {
+            const w = byId.get(id)
+            return w ? P.stageNeeds(w.ex, save.settings.sentencesPerStage) : null
+          },
+          today,
+        )
+      }
+      commit(progress, { settings })
     },
 
     dismissWelcome() {
@@ -542,7 +555,7 @@ export const useStore = create<Store>()((set, get) => {
       for (const i of pack.manifest.starters) progress = P.reveal(progress, pack.words[i].id, today)
       const fresh = newSave(pack.manifest.pack, pack.manifest.layoutVersion)
       enableWrites()
-      set({ save: { ...fresh, settings: get().save.settings }, saveError: null, selected: null, quest: null, hall: null })
+      set({ save: { ...fresh, settings: get().save.settings }, saveError: null, selected: null, hall: null })
       commit(progress, { welcomed: false })
       flushWrites()
       set({ modal: 'welcome' })

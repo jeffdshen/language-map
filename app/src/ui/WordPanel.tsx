@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { hanChars, loadSentences } from '../data/pack'
 import type { SentenceData } from '../data/types'
 import { nextHiddenWithChar, Vis } from '../logic/explore'
-import { currentStage, isDue, STAGES, stageDone, wordStatus } from '../logic/progress'
+import { currentStage, STAGES, stageDone, stageNeeds, wordStatus } from '../logic/progress'
 import { useStore } from '../store'
 import { Dots, LevelBadge, RegionTag, SentenceView, SpeakButton, WordChip } from './common'
 import { levelLabel, POS_LABEL } from './text'
@@ -18,7 +18,6 @@ export function WordPanel() {
 function WordPanelInner({ i }: { i: number }) {
   const pack = useStore((s) => s.pack!)
   const vis = useStore((s) => s.view!.vis[i])
-  const openCount = useStore((s) => s.view!.openCount)
   const settings = useStore((s) => s.save.settings)
   const from = useStore((s) => s.selectedFrom)
   const { select, revealWord, markKnown, setDetails } = useStore.getState()
@@ -71,11 +70,6 @@ function WordPanelInner({ i }: { i: number }) {
               I already know it
             </button>
           </div>
-          {openCount >= settings.openCap ? (
-            <p className="hint warn">
-              You already have {openCount} open words (soft cap {settings.openCap}). You can still reveal more.
-            </p>
-          ) : null}
         </section>
       ) : null}
 
@@ -103,51 +97,52 @@ function WordPanelInner({ i }: { i: number }) {
 
 function QuestSection({ i }: { i: number }) {
   const pack = useStore((s) => s.pack!)
-  const wp = useStore((s) => s.save.progress[pack.words[i].id])
-  const need = useStore((s) => s.save.settings.daysPerStage)
+  const w = pack.words[i]
+  const wp = useStore((s) => s.save.progress[w.id])
+  const sentences = useStore((s) => s.save.settings.sentencesPerStage)
   const count = useStore((s) => s.view!.stageCount)
-  const today = useStore((s) => s.today)
-  const { startQuest, stopQuest, openQuest, markStage, markKnown, resetWord } = useStore.getState()
-  const status = wordStatus(wp, need, count)
-  const cur = currentStage(wp, need, count)
-  const due = isDue(wp, need, today, count)
+  const { markStage, markKnown, resetWord, setDetails } = useStore.getState()
+  const needs = stageNeeds(w.ex, sentences)
+  const status = wordStatus(wp, needs, count)
+  const cur = currentStage(wp, needs, count)
 
   return (
     <section className="quest-section">
       <h3>Quest</h3>
       {status === 'learned' ? (
-        <div className="callout gold">⭐ Learned! This word is yours. Practice any stage again whenever you like.</div>
-      ) : status === 'revealed' ? (
+        <div className="callout gold">⭐ Learned! This word is yours. Practice it again whenever you like.</div>
+      ) : (
         <div className="callout">
           <p>
-            Learn <b>{pack.words[i].hanzi}</b> in {count === STAGES.length ? 'four stages, from hearing it to reading it' : `${count} listening stages`}.
-            Each stage needs {need} good day{need > 1 ? 's' : ''}.
+            {status === 'revealed' ? (
+              <>
+                Learn <b>{w.hanzi}</b> in {count === STAGES.length ? 'four stages, from hearing it to reading it' : `${count} listening stages`}.{' '}
+                {w.ex > 0
+                  ? `Sentence stages need ${sentences} sentences — any sentence you collect counts for every word in it.`
+                  : 'This word has no example sentences, so each stage is a single check.'}
+              </>
+            ) : (
+              <>
+                Next: <b>{STAGES[cur]?.title}</b>
+              </>
+            )}
           </p>
           <div className="row">
-            <button type="button" className="primary" onClick={() => startQuest(i)}>
-              ⚔️ Accept quest
+            <button type="button" className="primary" onClick={() => setDetails(false)}>
+              {status === 'revealed' ? '⚔️ Start' : '⚔️ Continue'}
             </button>
-            <button type="button" onClick={() => markKnown(i)}>
-              ✓ I know it
-            </button>
+            {status === 'revealed' ? (
+              <button type="button" onClick={() => markKnown(i)}>
+                ✓ I know it
+              </button>
+            ) : null}
           </div>
         </div>
-      ) : due ? (
-        <div className="callout due">
-          <p>
-            ❗ Today: <b>{STAGES[cur].title}</b>
-          </p>
-          <button type="button" className="primary" onClick={() => openQuest(i)}>
-            Start today's quest
-          </button>
-        </div>
-      ) : (
-        <div className="callout done">✓ Done for today. Come back tomorrow for the next day of practice.</div>
       )}
       <ol className="stages">
         {STAGES.slice(0, count).map((st, s) => {
           const sp = wp?.stages[s]
-          const done = stageDone(sp, need)
+          const done = stageDone(sp, needs[s])
           return (
             <li key={st.key} className={`${done ? 'done' : ''} ${s === cur && status === 'active' ? 'current' : ''}`}>
               <span className="stage-icon">{st.icon}</span>
@@ -155,11 +150,8 @@ function QuestSection({ i }: { i: number }) {
                 {st.title}
                 <small>{st.goal}</small>
               </span>
-              <Dots have={sp?.days.length ?? 0} need={need} marked={sp?.marked} done={done} />
+              <Dots have={sp?.n ?? 0} need={needs[s]} marked={sp?.marked} done={done} />
               <span className="stage-actions">
-                <button type="button" className="small" onClick={() => openQuest(i, s)} title="Practice this stage">
-                  Practice
-                </button>
                 <button
                   type="button"
                   className="small ghost"
@@ -176,13 +168,8 @@ function QuestSection({ i }: { i: number }) {
       {count < STAGES.length ? (
         <p className="hint">👂 Listening mode: reading stages are hidden (change it in the top bar or Settings).</p>
       ) : null}
-      <div className="row subtle">
-        {status === 'active' ? (
-          <button type="button" className="link" onClick={() => stopQuest(i)}>
-            Pause quest
-          </button>
-        ) : null}
-        {status !== 'revealed' ? (
+      {status !== 'revealed' ? (
+        <div className="row subtle">
           <button
             type="button"
             className="link"
@@ -192,8 +179,8 @@ function QuestSection({ i }: { i: number }) {
           >
             Reset progress
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </section>
   )
 }

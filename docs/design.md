@@ -46,22 +46,37 @@ Mandarin Chinese with the HSK 3.0 syllabus. The design stays language-agnostic.
 - **Mobile: every popup is easy to dismiss.** Panels and dialogs are bottom sheets that leave a
   strip of map above (tap it to close), keep their × pinned while scrolling, close with a swipe
   down on the grip, and close with the phone's Back button.
-- **Light interaction first.** Opening a word shows a small card with one-tap choices (reveal /
-  know it / learn / example). Only "Details" opens the full page, so going through known words
-  is fast.
+- **Few clicks.** Opening a word plays (or shows) one of its sentences right away. `E` always
+  confirms (collect / next), and the other choices (show answer, know it, another sentence,
+  details) are one key or tap each. Only "Details" opens the full page, so going through known
+  words is fast.
 - **Halls.** Every region has a hall: ⚔️ Challenge (multiple-choice rounds that clear words you
-  already know, several at a time) and 🏋️ Train (the region's due quests in a row).
+  already know, several at a time) and 💬 Sentences (random sentences from the region's words,
+  each one crediting every word in it).
 - **Exploration:**
-  - Fog of war, with a soft cap on open (revealed, unfinished) words.
+  - Fog of war with no cap on open words: you can have as many quests going as you like.
   - The default fog mode is *dim*: unexplored landmarks are faded but visible. The other modes
     are *hidden* ("?" spots near explored words) and *off*.
   - Words can be force-revealed through the map, search or 🔭 Discover.
-- **Progression:** 4 stages per word, each needing successes on 3 separate days
-  (configurable). Any stage can be self-marked done. Honor system.
-  1. Listen: understand in a sentence (audio)
-  2. Listen: understand the word alone (audio / pinyin)
-  3. Read: understand in a sentence (characters)
-  4. Read: understand the word alone (characters)
+- **Progression:** 4 stages per word, counted in points, not days. Honor system; any stage can
+  be self-marked done.
+  1. Listen: understand it in sentences (audio): 10 points (configurable 1–30)
+  2. Listen: understand the word alone (audio / pinyin): 1 check
+  3. Read: understand it in sentences (characters): 10 points
+  4. Read: understand the word alone (characters): 1 check
+
+  A word with no example sentences needs a single check per stage.
+- **Sentences are multi-reward quests.** Collecting a sentence ("I understood it") gives a point
+  to the sentence stage of *every* word in it, like a game quest with several rewards.
+  - "Show answer" gives the point to the focus word only; you can still "collect all" after
+    checking yourself.
+  - Sentence points never count toward the "alone" stages.
+  - Each sentence counts once per word; once a word's sentences run out, collecting one again
+    credits only that word (its list loops).
+  - A word you merely looked at stays undiscovered; it is revealed only when it earns a point.
+- **Map labels:** in listen + read mode, every word on the map also shows its pinyin until all
+  of its region's listening stages are done; after that the region shows characters only
+  (setting: auto / always / never).
 - **Quest mode:** *listen + read* (all 4 stages) or *listening only* (stages 1–2).
   - It is a display/logic lens, not separate data. All stage progress is always recorded.
   - In listening-only mode, "learned", the counters, region progress, reveal rewards and the
@@ -93,13 +108,13 @@ the browser. GitHub Pages deploys it from Actions on every push to `main`.
 All inputs are pinned with sha256 checksums in `pipeline/sources.lock.json`. The code is MIT.
 The generated pack is CC BY-SA 4.0 (see `ATTRIBUTION.md`).
 
-### Pack format (schema 3)
-Documented in `pipeline/README.md`. Schema 3 adds road, trail and bridge ground codes, and a
-region's `x, y` is now its hall.
+### Pack format (schema 4)
+Documented in `pipeline/README.md`. Schema 3 added road, trail and bridge ground codes and made
+a region's `x, y` its hall; schema 4 adds a per-word sentence count (`ex`).
 - `manifest.json`: levels (with word and region counts), starter words, `layoutVersion`,
   `contentHash`, sources.
 - `words.json`: columnar rows `id, hanzi, pinyin, level, pos, theme, region, x, y, anchor, freq,
-  glosses, neighbors, trad, alts`. `x, y` are integer grid cells.
+  glosses, neighbors, trad, alts, ex`. `x, y` are integer grid cells.
 - `world.json`: the grid, terrain (one ground-code string per row, including roads), region
   table (with hall positions) and run-length region map.
 - `sentences.json`: segmented sentences with per-token pinyin and HSK word links (loaded lazily).
@@ -121,7 +136,10 @@ progress.
   - character → words index
   - spatial grid for nearby words
 - `Sentence { id, en_id, en, seg[] }`, where tokens link to words and carry pinyin.
-- Progress (client only): `{ wordId: { revealed, stages[4]: { days[], marked?, completed? } } }`.
+- Progress (client only): `{ wordId: { revealed, started, stages[4]: { n, marked?, completed? } } }`
+  plus the collected sentence ids per kind (`collected: { listen[], read[] }`). Old day-based
+  saves are migrated (each counted day becomes a point; stages that met the old day target stay
+  completed).
 
 ## World generation
 `pipeline/langmap/world.py`. Everything is seeded and deterministic.
@@ -190,8 +208,11 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
 `zh-en-closeup.png` are for visual review.
 
 ## Sentence selection
-- Up to 6 Tatoeba sentences per word, ranked by comprehensibility: the other words should be at
-  or below the word's level. Length limits and deterministic tie-breaks apply.
+- Up to 10 Tatoeba sentences per word, **easiest first**. The score is how many of the other
+  words are above the word's level and by how much, plus a small penalty outside a comfortable
+  length; ties go to shorter sentences, then the Tatoeba id. So sentences whose other words are
+  all at or below the word's level ("easy": 57–69% of the chosen ones for HSK 1–6, see the
+  report) come first, which matters because collecting a sentence credits every word in it.
 - Sentences are segmented with jieba plus the HSK lexicon, readings are disambiguated with
   pypinyin, and only simplified-script sentences are kept.
 - Coverage by level is reported in `pipeline/reports/zh-en.md`. Words without a sentence fall
@@ -212,16 +233,20 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
     trees, pines, fruit and blossom trees, boulders, mountains, clouds, dunes, mesas, crystals,
     lily pads and haystacks in the wilds. Colors vary per word.
   - Halls are drawn as a flagged building with a name plate; the start plaza has a fountain.
-  - State is shown by quest marks ("!" when due), stage pips under the hanzi, a ★ when learned,
-    and a highlight ring on the landmark you're next to.
-  - Pinyin plates are placed in priority order with an occupancy grid to avoid overlap.
+  - State is shown by quest marks ("!" on a discovered word with no points yet), stage pips
+    under the hanzi, a ★ when learned, and a highlight ring on the landmark you're next to.
+  - Pinyin plates are placed in priority order with an occupancy grid to avoid overlap. In
+    listen + read mode (setting "auto") every word in a region whose listening stages aren't
+    all done gets one, including faded unexplored words.
   - In listening-only mode the landmark shows the pinyin (listeners know the sound, not the
     writing) and the optional second plate shows the characters; the word card also leads with
     pinyin.
 - **Player** (`map/player.ts`, `logic/walk.ts`):
   - WASD/arrows walk (Shift runs) with collision against landmarks, halls, water and the sea.
-  - Clicking or tapping walks there along an A* path; clicking a landmark walks up to it and
-    opens it. `N` walks to the next unexplored word nearby.
+  - Clicking or tapping walks there along an A* path at a constant pace per trip: walking speed
+    for short hops, faster for long trips (each trip takes about a second, capped), with no
+    slowdown at the end. Clicking a landmark walks up to it and opens it. `N` walks to the next
+    word with a quest nearby (skipping the last few visited).
   - `E`/Space interacts with the nearest landmark or hall in reach. The camera follows
     the player; dragging pans away and `C` re-centers.
   - The position is saved per pack. `H` and fast travel (search, world map) put the player in
@@ -243,14 +268,16 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
   - In *dim* fog every hidden landmark is drawn faded and clickable. In *hidden* fog only
     frontier "?" spots show.
   - The optional "fog scope: terrain" setting also darkens unexplored ground.
-- **Word card** (`ui/WordPopover.tsx`): a small card at the bottom with one-tap choices
-  (keys `1`–`4`, `N` next):
-  - unexplored: 👁 Reveal (and speak) / ✓ Know it
-  - revealed: ⚔️ Learn / ✓ Know it / 💬 Example / 📖 Details
-  - on a quest: ▶ Practice (when due) / ✓ Know it / 💬 / 📖, with stage pips
-  - learned: 💬 / 📖
-
-  💬 Example cycles the word's sentences, with English on demand.
+- **Word card** (`ui/WordPopover.tsx` → `ui/QuestCard.tsx`): a small card at the bottom that
+  starts the word's current stage at once. A sentence stage plays the sentence (listening) or
+  shows it (reading).
+  - `E` / ✓ Collect: a point for every word in the sentence; the reward line lists them.
+  - `Space` / Show answer: hanzi, pinyin, English; a point for this word only, and `E` then
+    collects the rest.
+  - `K` Know it (mark learned), `X` another sentence, `I` details, `R` replay, `N` next word.
+  - After collecting, `E` goes to the next sentence (or the next word once it is learned).
+  - An "alone" stage plays or shows just the word: `E` "got it", or `Space` to check first.
+  - Learned words still show sentences, so collecting them credits the other words.
 - **Halls** (`ui/HallModal.tsx`, `logic/boss.ts`):
   - The menu shows the region's level, progress and word list.
   - ⚔️ Challenge: rounds of 8 of the region's unlearned words (easiest and most common first),
@@ -259,7 +286,9 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
     never share a sense with the answer or are its closest neighbors in meaning. A correct answer marks
     the word known; a miss reveals it and shows its meaning and an example. The summary lists
     cleared and missed words, and can start quests for the missed ones.
-  - 🏋️ Train: opens the region's due quests one after another, then returns to the hall.
+  - 💬 Sentences: a shuffled run through the region's unlearned words with sentences (all of
+    them once the region is learned), one sentence each in the same quest card; `E` collects
+    and moves on.
 - **Word details** (📖): meanings, quest stages (practice / mark done), example sentences, and
   an "Explore" section:
   - builds on / leads to
@@ -274,23 +303,24 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
     app keeps one extra history entry; Back pops it and closes one layer (dialog → quest → hall
     → details → card → quest log, like Esc), and closing the last popup another way removes
     the entry again.
-- **Quest:**
-  - A modal per stage: listen or read, show the answer (hanzi, pinyin, English, highlighted
-    word), then self-grade.
-  - One success per learning day counts. The day rolls over at 04:00 local time
-    (configurable).
-  - A stage is done after N successful days or when self-marked. Its completion is locked in.
+- **Quest points:**
+  - A stage is done once its points reach the requirement, or when self-marked. Completion is
+    locked in, so lowering or raising "sentences per stage" never un-finishes a stage.
+  - Points can be earned in any order; the card always works on the first unfinished stage.
+- **Quest log** (`Q`, or click the 🧭 open / ⭐ learned counters in the top bar):
+  - *Open*: words in progress (stage, mini progress bar, points/needed; closest to done first)
+    and discovered words not started yet.
+  - *Learned*: learned count per level (click a level to filter) and the learned words.
 - **Reveal logic:**
   - Finishing a stage reveals 1 word; learning a word reveals 2.
   - Candidates are ranked by map proximity first, then meaning/character links, preferring
     easier levels so each band fills before the next.
-  - Auto-reveal stops at the soft cap on open words.
   - 🔭 Discover picks the best candidate near the camera.
 - **Search:** hanzi / pinyin (tone marks optional) / English. Results fly to the word.
 - **Settings:**
   - quest mode, fog mode and scope
-  - days per stage, open-word soft cap, auto-reveal
-  - pinyin on the map, TTS rate, day rollover hour
+  - sentences needed per sentence stage (1–30, default 10), auto-reveal
+  - pinyin on the map (auto / always / never), TTS rate
   - bulk "known up to HSK n"
   - export/import/reset
 - **Progress storage:**
@@ -329,6 +359,15 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
    - bottom sheets with swipe-to-close, pinned close buttons, Back button support, compact
      top bar and welcome screen on phones
    - pack files cache-busted by `contentHash`, so a deploy never mixes old and new data
+10. ✅ **M9 Sentence quests:**
+   - points instead of days: 10 sentences per sentence stage (looping), 1 check for alone stages
+   - multi-reward sentences: collecting credits every word in it; show answer credits the focus
+     word; words are only revealed by earning a point
+   - up to 10 sentences per word, easiest first (pack schema 4 with per-word counts)
+   - quest card opens straight into a sentence; `E` confirms everywhere; no soft cap
+   - hall 💬 Sentences replaces Train; clickable open/learned counters with log tabs
+   - pinyin under every word until its region's listening stages are done
+   - constant-pace, faster walking on long trips
 
 ## Ideas / next
 - **Names:** wilderness names are just "stem + ground" (e.g. *Faintness Crystal Fields*); a
@@ -340,8 +379,11 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
   (listen to or read a sentence, pick its meaning) once most of a town is learned, and a
   stamp in a "passport" for clearing it.
 - **Minimap navigation:** click a spot on the minimap (not only the button) to walk or fly
-  there. A "next due quest" compass arrow.
-- **Due pulse:** gently animate landmarks whose quests are due today.
+  there. A "next quest" compass arrow.
+- **Sentence difficulty:** grade sentences by the learner's own progress (prefer sentences whose
+  other words are already learned) rather than only by HSK level.
+- **Spaced review:** an optional "review" queue that resurfaces learned words after a while,
+  now that stages no longer use days.
 - **Character decomposition** hints (Make Me a Hanzi). Pre-generated audio. Curated sentences
   for low-coverage words.
 - **Sprites:** swap the vector landmarks and player for a pixel-art tile set if one with a

@@ -1,22 +1,23 @@
 import type { Pack } from '../data/pack'
 import { hanChars, wordsNear } from '../data/pack'
-import { isDue, STAGE_COUNT, stagesDone, wordStatus, type Progress, type WordStatus } from './progress'
+import { heard, stageNeeds, stagesDone, wordStatus, type Progress, type Rules, type WordStatus } from './progress'
 
 export const Vis = { Hidden: 0, Frontier: 1, Revealed: 2, Active: 3, Learned: 4 } as const
 export type Vis = (typeof Vis)[keyof typeof Vis]
 
 export interface MapView {
   vis: Uint8Array
+  /** Counted stages done per word. */
   stages: Uint8Array
-  due: Uint8Array
   openCount: number
   learnedCount: number
   activeCount: number
-  dueCount: number
   learnedByLevel: number[]
   /** Per region: learned words, and words on the map (revealed, active or learned). */
   regionLearned: Uint16Array
   regionSeen: Uint16Array
+  /** Per region: words whose listening stages are done (the map drops pinyin once a whole region is heard). */
+  regionHeard: Uint16Array
   /** Quest stages that count in the current quest mode. */
   stageCount: number
   /** Monotonic counter so renderers can cheaply detect changes. */
@@ -85,30 +86,26 @@ export function linksOf(pack: Pack, i: number, charLimit = 6): Link[] {
 
 let version = 0
 
-export function computeView(
-  pack: Pack,
-  progress: Progress,
-  need: number,
-  today: string,
-  stageCount = STAGE_COUNT,
-): MapView {
+export function computeView(pack: Pack, progress: Progress, rules: Rules): MapView {
   const n = pack.words.length
+  const stageCount = rules.count
   const regionLearned = new Uint16Array(pack.world.regions.length)
   const regionSeen = new Uint16Array(pack.world.regions.length)
+  const regionHeard = new Uint16Array(pack.world.regions.length)
   const vis = new Uint8Array(n)
   const stages = new Uint8Array(n)
-  const due = new Uint8Array(n)
   let openCount = 0
   let learnedCount = 0
   let activeCount = 0
-  let dueCount = 0
   const learnedByLevel = new Array<number>(8).fill(0)
   for (const w of pack.words) {
     const wp = progress[w.id]
     if (!wp) continue
-    const v = STATUS_VIS[wordStatus(wp, need, stageCount)]
+    const needs = stageNeeds(w.ex, rules.sentences)
+    const v = STATUS_VIS[wordStatus(wp, needs, stageCount)]
     vis[w.i] = v
-    stages[w.i] = stagesDone(wp, need, stageCount)
+    stages[w.i] = stagesDone(wp, needs, stageCount)
+    if (w.region >= 0 && heard(wp, needs)) regionHeard[w.region]++
     if (v >= Vis.Revealed && w.region >= 0) regionSeen[w.region]++
     if (v === Vis.Revealed || v === Vis.Active) openCount++
     if (v === Vis.Active) activeCount++
@@ -116,10 +113,6 @@ export function computeView(
       learnedCount++
       learnedByLevel[w.level]++
       if (w.region >= 0) regionLearned[w.region]++
-    }
-    if (isDue(wp, need, today, stageCount)) {
-      due[w.i] = 1
-      dueCount++
     }
   }
   const near = nearby(pack)
@@ -130,14 +123,13 @@ export function computeView(
   return {
     vis,
     stages,
-    due,
     openCount,
     learnedCount,
     activeCount,
-    dueCount,
     learnedByLevel,
     regionLearned,
     regionSeen,
+    regionHeard,
     stageCount,
     version: ++version,
   }
@@ -180,16 +172,8 @@ export function nearestExplored(pack: Pack, view: MapView, x: number, y: number,
   return null
 }
 
-/** Words to reveal after progress on `from`, respecting the soft cap on open words. */
-export function autoRevealPicks(
-  pack: Pack,
-  view: MapView,
-  from: number,
-  count: number,
-  cap: number,
-): number[] {
-  const room = Math.max(0, cap - view.openCount)
-  const n = Math.min(count, room)
+/** Words to reveal after progress on `from`: linked words first, then the best candidates anywhere. */
+export function autoRevealPicks(pack: Pack, view: MapView, from: number, n: number): number[] {
   if (n <= 0) return []
   let picks = revealCandidates(pack, view, from, n)
   if (picks.length < n) {

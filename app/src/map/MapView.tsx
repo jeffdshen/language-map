@@ -4,7 +4,7 @@ import { walkGrid } from '../logic/walk'
 import { useStore } from '../store'
 import { emitCamera, loadCamera, saveCamera } from './camera'
 import { Minimap } from './Minimap'
-import { loadPlayer, nearTarget, nextUnexplored, Player, savePlayer } from './player'
+import { loadPlayer, nearTarget, nextQuestWord, Player, savePlayer } from './player'
 import { MapRenderer, type PanelMode } from './renderer'
 
 const MOVE_KEYS: Record<string, [number, number]> = {
@@ -91,7 +91,7 @@ export function MapView() {
       scheduleSave()
       if (manual && s.selected !== null && s.selectedFrom === 'map' && !s.details) {
         const w = pack.words[s.selected]
-        if (Math.hypot(w.x - player.x, w.y - player.y) > 4) s.select(null)
+        if (Math.hypot(w.x - player.x, w.y - player.y) > 3) s.select(null)
       }
     }
 
@@ -212,14 +212,19 @@ export function MapView() {
       } else s.openHall(t.hall)
     }
 
+    /** Words recently visited with N (so it doesn't bounce between two unfinished words). */
+    const recent: number[] = []
     const next = () => {
       const s = useStore.getState()
       if (!s.view) return
-      const j = s.here >= 0 ? nextUnexplored(pack, s.view, s.here, player.x, player.y) : null
+      const avoid = s.selected !== null ? [...recent, s.selected] : recent
+      const j = s.here >= 0 ? nextQuestWord(pack, s.view, s.here, player.x, player.y, avoid) : null
       if (j === null) {
-        s.toast('Every word in this region is explored. Try the challenge at its hall, or head on to the next region.')
+        s.toast('Every word in this region is learned. Head on to the next region, or try the challenge at its hall.')
         return
       }
+      recent.push(j)
+      if (recent.length > 8) recent.shift()
       s.select(j, 'map')
       const w = pack.words[j]
       if (!goTo(w.x, w.y)) renderer.flyTo(w.x, w.y)
@@ -332,10 +337,15 @@ export function MapView() {
       renderer.setHallHover(null)
     }
 
-    // ---- keyboard: WASD / arrows to walk (Shift runs), E or Space to talk, N for the next new word
+    // ---- keyboard: WASD / arrows to walk (Shift runs), E or Space to talk, N for the next word
     const blocked = () => {
       const s = useStore.getState()
-      return s.quest !== null || s.modal !== null || s.hall !== null
+      return s.modal !== null || s.hall !== null
+    }
+    /** The word dialog is open: it handles E, Space, Enter and N itself. */
+    const dialogOpen = () => {
+      const s = useStore.getState()
+      return s.selected !== null && !s.details
     }
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Shift') run = true
@@ -350,6 +360,8 @@ export function MapView() {
           updateNear()
         }
         kick()
+      } else if (dialogOpen() && (key === 'e' || key === ' ' || key === 'n' || key === 'enter')) {
+        return
       } else if (key === 'e' || (key === ' ' && !onButton)) {
         e.preventDefault()
         interact()

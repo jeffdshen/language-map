@@ -36,5 +36,6 @@ export function sentencePinyin(s: Sentence): string {
   return s.seg
     .map((t) => tokenPinyin(t) || t[0])
     .join(' ')
-    .replace(/\s+([，。！？、；：,.!?;:])/g, '$1')
+    .replace(/\s+([，。！？、；：,.!?;:”’）》」』)])/g, '$1')
+    .replace(/([“‘（《「『(])\s+/g, '$1')
 }

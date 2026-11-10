@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { dayKey, daysBetween } from './dates'
 import {
+  credit,
   currentStage,
-  isDue,
+  heard,
   lockCompleted,
   markKnown,
-  recordSuccess,
   resetWord,
   setStageMarked,
-  startQuest,
+  stageNeeds,
   stagesDone,
   wordStatus,
   type Progress,
@@ -25,70 +25,73 @@ describe('dates', () => {
 
 describe('progress', () => {
   const id = 'L1-0001'
+  const T = '2024-01-01'
 
-  it('needs successes on N separate days per stage', () => {
-    let p: Progress = startQuest({}, id, '2024-01-01')
-    expect(wordStatus(p[id], 3)).toBe('active')
-    expect(isDue(p[id], 3, '2024-01-01')).toBe(true)
+  it('needs N sentences on sentence stages and one check on word-alone stages', () => {
+    expect(stageNeeds(5, 10)).toEqual([10, 1, 10, 1])
+    // No example sentences: every stage is a single check.
+    expect(stageNeeds(0, 10)).toEqual([1, 1, 1, 1])
+  })
 
-    let r = recordSuccess(p, id, 0, '2024-01-01', 3)
-    expect(r.counted).toBe(true)
-    p = r.progress
-    expect(isDue(p[id], 3, '2024-01-01')).toBe(false)
-
-    r = recordSuccess(p, id, 0, '2024-01-01', 3)
-    expect(r.counted).toBe(false) // same day doesn't count twice
-
-    p = recordSuccess(p, id, 0, '2024-01-02', 3).progress
-    expect(currentStage(p[id], 3)).toBe(0)
-    p = recordSuccess(p, id, 0, '2024-01-05', 3).progress
-    expect(currentStage(p[id], 3)).toBe(1)
-    expect(stagesDone(p[id], 3)).toBe(1)
-    // With a lower requirement the stage would already have been done.
-    expect(stagesDone(p[id], 1)).toBe(1)
-    // The next stage becomes due right away.
-    expect(isDue(p[id], 3, '2024-01-05')).toBe(true)
+  it('counts points, not days', () => {
+    const needs = stageNeeds(3, 3)
+    let p: Progress = credit({}, id, 0, T, needs[0])
+    expect(wordStatus(p[id], needs)).toBe('active')
+    expect(p[id].revealed).toBe(T)
+    // Several points on the same day all count.
+    p = credit(p, id, 0, T, needs[0])
+    expect(currentStage(p[id], needs)).toBe(0)
+    p = credit(p, id, 0, T, needs[0])
+    expect(p[id].stages[0]).toEqual({ n: 3, completed: T })
+    expect(currentStage(p[id], needs)).toBe(1)
+    expect(heard(p[id], needs)).toBe(false)
+    p = credit(p, id, 1, T, needs[1])
+    expect(heard(p[id], needs)).toBe(true)
+    expect(stagesDone(p[id], needs)).toBe(2)
+    // Listening mode counts only the first two stages.
+    expect(wordStatus(p[id], needs, 2)).toBe('learned')
+    expect(wordStatus(p[id], needs, 4)).toBe('active')
   })
 
   it('supports self-marking stages and whole words', () => {
-    let p: Progress = setStageMarked({}, id, 2, true, '2024-01-01')
-    expect(stagesDone(p[id], 3)).toBe(1)
-    expect(wordStatus(p[id], 3)).toBe('revealed')
-    p = setStageMarked(p, id, 2, false, '2024-01-01')
-    expect(stagesDone(p[id], 3)).toBe(0)
+    const needs = stageNeeds(3, 3)
+    let p: Progress = setStageMarked({}, id, 2, true, T)
+    expect(stagesDone(p[id], needs)).toBe(1)
+    expect(wordStatus(p[id], needs)).toBe('revealed')
+    p = setStageMarked(p, id, 2, false, T)
+    expect(stagesDone(p[id], needs)).toBe(0)
 
-    p = markKnown(p, id, '2024-01-01')
-    expect(wordStatus(p[id], 3)).toBe('learned')
-    expect(currentStage(p[id], 3)).toBe(-1)
-    expect(isDue({ ...p[id], started: '2024-01-01' }, 3, '2024-01-01')).toBe(false)
+    p = markKnown(p, id, T)
+    expect(wordStatus(p[id], needs)).toBe('learned')
+    expect(currentStage(p[id], needs)).toBe(-1)
 
     p = resetWord(p, id, '2024-01-02')
-    expect(wordStatus(p[id], 3)).toBe('revealed')
-    expect(stagesDone(p[id], 3)).toBe(0)
+    expect(wordStatus(p[id], needs)).toBe('revealed')
+    expect(stagesDone(p[id], needs)).toBe(0)
   })
 
-  it('keeps finished stages done when days-per-stage goes up', () => {
-    let p: Progress = startQuest({}, id, '2024-01-01')
-    p = recordSuccess(p, id, 0, '2024-01-01', 1).progress
-    expect(p[id].stages[0].completed).toBe('2024-01-01')
-    expect(stagesDone(p[id], 5)).toBe(1)
+  it('keeps finished stages done when sentences-per-stage goes up', () => {
+    let p: Progress = credit({}, id, 0, T, 1)
+    expect(p[id].stages[0].completed).toBe(T)
+    expect(stagesDone(p[id], stageNeeds(3, 10))).toBe(1)
 
-    // Stages done only by the old, lower requirement get locked in when the setting changes.
-    let q: Progress = startQuest({}, id, '2024-01-01')
-    q = recordSuccess(q, id, 1, '2024-01-03', 5).progress
-    q = recordSuccess(q, id, 1, '2024-01-02', 5).progress
-    expect(stagesDone(q[id], 5)).toBe(0)
-    const locked = lockCompleted(q, 2)
-    expect(locked[id].stages[1].completed).toBe('2024-01-03')
-    expect(stagesDone(locked[id], 5)).toBe(1)
-    expect(lockCompleted(locked, 2)).toBe(locked)
+    // Points earned under a lower requirement get locked in when the setting changes.
+    let q: Progress = credit({}, id, 2, T, 10)
+    q = credit(q, id, 2, T, 10)
+    expect(stagesDone(q[id], stageNeeds(3, 10))).toBe(0)
+    const locked = lockCompleted(q, () => stageNeeds(3, 2), '2024-01-03')
+    expect(locked[id].stages[2].completed).toBe('2024-01-03')
+    expect(stagesDone(locked[id], stageNeeds(3, 10))).toBe(1)
+    expect(lockCompleted(locked, () => stageNeeds(3, 2), '2024-01-04')).toBe(locked)
+    // Unknown ids are left alone.
+    expect(lockCompleted(q, () => null, T)).toBe(q)
   })
 
   it('does not mutate the previous state', () => {
-    const before: Progress = startQuest({}, id, '2024-01-01')
+    const before: Progress = credit({}, id, 0, T, 3)
     const snapshot = JSON.stringify(before)
-    recordSuccess(before, id, 0, '2024-01-01', 3)
-    markKnown(before, id, '2024-01-01')
+    credit(before, id, 0, T, 3)
+    markKnown(before, id, T)
     expect(JSON.stringify(before)).toBe(snapshot)
   })
 })

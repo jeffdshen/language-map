@@ -75,6 +75,7 @@ export function makePack(): Pack {
     neighbors: neighbors ?? [],
     trad: hanzi,
     alts: [],
+    ex: i === 8 ? 0 : 2,
   }))
   const manifest = { pack: 'test', layoutVersion: 2, starters: [0, 6] } as unknown as Manifest
   return buildPack(manifest, world, words)

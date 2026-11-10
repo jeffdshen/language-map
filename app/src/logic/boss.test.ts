@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { makePack } from '../test/fixture'
 import { bossQuestion, bossQueue, rng, shortGloss } from './boss'
 import { computeView } from './explore'
-import { markKnown, reveal, startQuest, type Progress } from './progress'
+import { credit, markKnown, reveal, type Progress } from './progress'
 
 const T = '2024-01-01'
 
@@ -13,8 +13,8 @@ describe('boss', () => {
   it('queues unlearned region words, quests last', () => {
     let p: Progress = reveal({}, id(0), T)
     p = markKnown(p, id(2), T)
-    p = startQuest(p, id(0), T)
-    const view = computeView(pack, p, 3, T)
+    p = credit(p, id(0), 0, T, 3)
+    const view = computeView(pack, p, { sentences: 3, count: 4 })
     const region = pack.words[0].region
     const q = bossQueue(pack, view, region)
     expect(q).not.toContain(2)

@@ -7,7 +7,6 @@ import { HallModal } from './ui/HallModal'
 import { Legend } from './ui/Legend'
 import { MapModal } from './ui/MapModal'
 import { QuestLog } from './ui/QuestLog'
-import { QuestModal } from './ui/QuestModal'
 import { SettingsModal } from './ui/SettingsModal'
 import { Toasts } from './ui/Toasts'
 import { TopBar } from './ui/TopBar'
@@ -34,13 +33,12 @@ type StoreState = ReturnType<typeof useStore.getState>
 
 /** Anything the back button / Esc can close (the welcome screen has no close). */
 function overlayOpen(s: StoreState): boolean {
-  return (s.modal !== null && s.modal !== 'welcome') || s.quest !== null || s.hall !== null || s.selected !== null || s.questLogOpen
+  return (s.modal !== null && s.modal !== 'welcome') || s.hall !== null || s.selected !== null || s.questLogOpen
 }
 
 /** Close the topmost overlay, in the same order as Esc. */
 function closeTop(s: StoreState) {
   if (s.modal !== null && s.modal !== 'welcome') s.setModal(null)
-  else if (s.quest) s.closeQuest()
   else if (s.hall !== null) s.closeHall()
   else if (s.selected !== null && s.details) s.setDetails(false)
   else if (s.selected !== null) s.select(null)
@@ -135,14 +133,14 @@ export default function App() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key === 'Escape') {
-        if (s.quest || s.modal) return
+        if (s.modal) return
         if (s.hall !== null) s.closeHall()
         else if (s.selected !== null && s.details) s.setDetails(false)
         else if (s.selected !== null) s.select(null)
         else if (s.questLogOpen) s.setQuestLog(false)
         return
       }
-      if (s.quest || s.modal || s.hall !== null) return
+      if (s.modal || s.hall !== null) return
       if (e.key === 'q' || e.key === 'Q') s.setQuestLog(!s.questLogOpen)
       else if (e.key === 'h' || e.key === 'H') s.flyHome()
       else if (e.key === 'm' || e.key === 'M') s.setModal('map')
@@ -180,7 +178,6 @@ export default function App() {
       <WordPopover />
       <Legend />
       <HallModal />
-      <QuestModal />
       <WelcomeModal />
       <SettingsModal />
       <AboutModal />

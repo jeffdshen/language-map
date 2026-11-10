@@ -1,5 +1,5 @@
 {
- "schema": 3,
+ "schema": 4,
  "pack": "zh-en",
  "title": "Mandarin Chinese → English (HSK 3.0, 2025 syllabus)",
  "target": {
@@ -12,7 +12,7 @@
   "name": "English"
  },
  "layoutVersion": 4,
- "contentHash": "f60ff43f14346514",
+ "contentHash": "32fb77459df04973",
  "files": {
   "words": "words.json",
   "world": "world.json",
@@ -75,7 +75,7 @@
  ],
  "counts": {
   "words": 11000,
-  "sentences": 16822,
+  "sentences": 20291,
   "regions": 172
  },
  "sources": [
@@ -130,7 +130,7 @@
   },
   "sentences": {
    "tatoeba_pairs_simplified": 33506,
-   "sentences_used": 16822,
+   "sentences_used": 20291,
    "coverage_by_level": {
     "1": [
      295,
@@ -159,6 +159,36 @@
     "7": [
      2021,
      5600
+    ]
+   },
+   "easy_by_level": {
+    "1": [
+     2798,
+     1731
+    ],
+    "2": [
+     1727,
+     1050
+    ],
+    "3": [
+     3926,
+     2458
+    ],
+    "4": [
+     6227,
+     3552
+    ],
+    "5": [
+     6253,
+     3750
+    ],
+    "6": [
+     3641,
+     2513
+    ],
+    "7": [
+     4483,
+     3787
     ]
    }
   },

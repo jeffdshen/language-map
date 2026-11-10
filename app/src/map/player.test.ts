@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { computeView } from '../logic/explore'
-import { reveal, type Progress } from '../logic/progress'
+import { credit, markKnown, reveal, type Progress } from '../logic/progress'
 import { isBlocked, walkGrid } from '../logic/walk'
 import { makePack } from '../test/fixture'
-import { HALL_REACH, nearTarget, nextUnexplored, Player, REACH, RUN_SPEED, WALK_SPEED } from './player'
+import { HALL_REACH, nearTarget, nextQuestWord, pathSpeed, Player, REACH, RUN_SPEED, TRIP_TIME, WALK_SPEED } from './player'
 
 const T = '2024-01-01'
+const R = { sentences: 3, count: 4 }
 
 describe('player', () => {
   const pack = makePack()
   const g = walkGrid(pack)
-  const none = computeView(pack, {}, 3, T)
+  const none = computeView(pack, {}, R)
 
   it('never starts inside the fountain or a landmark', () => {
     const p = new Player(g, 0, 0)
@@ -80,19 +81,50 @@ describe('player', () => {
     // Hidden fog: unexplored words can't be talked to (but halls still can).
     expect(nearTarget(pack, none, true, 2, -1.5)).toBeNull()
     expect(nearTarget(pack, none, true, -3, 2.2)).toEqual({ hall: 0 })
-    const seen = computeView(pack, reveal({}, pack.words[0].id, T), 3, T)
+    const seen = computeView(pack, reveal({}, pack.words[0].id, T), R)
     expect(nearTarget(pack, seen, true, 2, -1.5)).toEqual({ word: 1 }) // frontier of 学
     expect(REACH).toBeGreaterThan(1.5)
     expect(HALL_REACH).toBeGreaterThan(2)
   })
 
-  it('points to the nearest unexplored word of a region', () => {
+  it('points to the nearest unexplored word of a region, then unfinished ones', () => {
     const region = pack.words[0].region
     let p: Progress = reveal({}, pack.words[0].id, T)
-    expect(nextUnexplored(pack, computeView(pack, p, 3, T), region, -4, 2)).toBe(7)
+    expect(nextQuestWord(pack, computeView(pack, p, R), region, -4, 2)).toBe(7)
     p = reveal(p, pack.words[7].id, T)
-    expect(nextUnexplored(pack, computeView(pack, p, 3, T), region, -4, 2)).toBe(2) // 老师 (√8 away) before 大学 (3 away)
-    for (const i of pack.regionWords[region]) p = reveal(p, pack.words[i].id, T)
-    expect(nextUnexplored(pack, computeView(pack, p, 3, T), region, -4, 2)).toBeNull()
+    expect(nextQuestWord(pack, computeView(pack, p, R), region, -4, 2)).toBe(2) // 老师 (√8 away) before 大学 (3 away)
+    // Just-visited words are skipped.
+    expect(nextQuestWord(pack, computeView(pack, p, R), region, -4, 2, [2])).not.toBe(2)
+    const all = pack.regionWords[region]
+    for (const i of all) p = reveal(p, pack.words[i].id, T)
+    // Everything is on the map: the nearest unfinished word next.
+    const near = nextQuestWord(pack, computeView(pack, p, R), region, -4, 2)
+    expect(near).not.toBeNull()
+    expect(all).toContain(near)
+    p = credit(p, pack.words[near!].id, 0, T, 3)
+    expect(nextQuestWord(pack, computeView(pack, p, R), region, -4, 2, [near!])).not.toBe(near)
+    // When everything else was just visited, the older visits come back before giving up.
+    const others = all.filter((i) => i !== near)
+    expect(nextQuestWord(pack, computeView(pack, p, R), region, -4, 2, [...others, near!])).not.toBeNull()
+    for (const i of all) p = markKnown(p, pack.words[i].id, T)
+    expect(nextQuestWord(pack, computeView(pack, p, R), region, -4, 2)).toBeNull()
+  })
+
+  it('walks long trips faster at a constant pace', () => {
+    expect(pathSpeed(3)).toBe(WALK_SPEED)
+    expect(pathSpeed(44)).toBeCloseTo(44 / TRIP_TIME)
+    expect(pathSpeed(10_000)).toBeLessThan(200)
+    // The pace doesn't drop as the path runs out.
+    const p = new Player(g, -6, 5)
+    p.walkTo(5, 5)
+    const speeds: number[] = []
+    for (let k = 0; k < 400 && p.busy; k++) {
+      const x0 = p.x
+      const y0 = p.y
+      p.update(0.01, { dx: 0, dy: 0, run: false })
+      if (p.busy) speeds.push(Math.hypot(p.x - x0, p.y - y0) / 0.01)
+    }
+    expect(speeds.length).toBeGreaterThan(3)
+    for (const v of speeds) expect(v).toBeCloseTo(speeds[0], 5)
   })
 })

@@ -76,10 +76,10 @@ export function Legend() {
               <span className="sw frontier">?</span> faded: not discovered yet
             </li>
             <li>
-              <span className="sw due">!</span> quest due today
+              <span className="sw due">!</span> quest waiting: discovered, no points yet
             </li>
             <li>
-              <span className="sw hall">⚑</span> region hall — challenge and training
+              <span className="sw hall">⚑</span> region hall — sentences and challenge
             </li>
           </ul>
           {BIOMES.map(([name, kinds]) => (

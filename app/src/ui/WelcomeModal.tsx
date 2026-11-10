@@ -42,22 +42,22 @@ export function WelcomeModal() {
           <div>
             <b>Walk around.</b> Each town gathers words on a topic, and neighbors share meaning. Walk with{' '}
             <kbd>WASD</kbd> (or tap where to go), press <kbd>E</kbd> at a word to talk to it, and <kbd>M</kbd> for the
-            world map. Every town has a ⚑ hall where you can train or challenge its master to clear many words at once.
+            world map. Every town has a ⚑ hall with random sentences, or challenge its master to clear many words at once.
           </div>
         </li>
         <li>
           <span>⚔️</span>
           <div>
             <b>Each word is a quest</b>: hear it in a sentence → hear it alone → read it in a sentence → read it
-            alone. Each stage needs a few good days. It's the honor system, and you can mark anything you already
-            know. Only care about listening? Pick listening-only below.
+            alone. Every sentence you collect counts for each word in it. It's the honor system, and you can mark
+            anything you already know. Only care about listening? Pick listening-only below.
           </div>
         </li>
         <li>
           <span>🌫️</span>
           <div>
-            <b>Explore through the fog.</b> Reveal a word or say you know it; finishing stages uncovers linked words.
-            Press <kbd>N</kbd> to walk to the next new word. A soft cap keeps you from opening too many at once.
+            <b>Explore through the fog.</b> Walk up to a word and press <kbd>E</kbd>; finishing stages uncovers linked
+            words. Press <kbd>N</kbd> to walk to the next word.
           </div>
         </li>
       </ul>

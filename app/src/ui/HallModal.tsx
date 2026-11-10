@@ -1,35 +1,34 @@
 import { useEffect, useMemo, useState } from 'react'
 import { loadSentences } from '../data/pack'
 import type { SentenceData } from '../data/types'
-import { bossQueue, bossQuestion, rng, shortGloss, type BossQuestion } from '../logic/boss'
+import { bossQueue, bossQuestion, rng, sentenceQueue, shortGloss, type BossQuestion } from '../logic/boss'
 import { Vis } from '../logic/explore'
-import { isDue } from '../logic/progress'
 import { useStore } from '../store'
 import { speak } from '../tts'
 import { Modal, SentenceView, SpeakButton, WordChip } from './common'
+import { QuestCard } from './QuestCard'
 import { levelLabel, sentenceText } from './text'
 
 /** Questions per challenge round (the hall master's hit points). */
 export const ROUND = 8
 
-/** A region's hall: progress, training on due words, and a challenge that can clear several words at once. */
+/** A region's hall: progress, random sentences from the town, and a challenge that can clear several words at once. */
 export function HallModal() {
   const region = useStore((s) => s.hall)
-  const quest = useStore((s) => s.quest)
-  // Training opens quests on top; the hall comes back when they close.
-  if (region === null || quest) return null
+  if (region === null) return null
   return <HallInner key={region} region={region} />
 }
 
-type Phase = { kind: 'menu' } | { kind: 'boss'; queue: number[]; seed: number } | { kind: 'done'; cleared: number[]; missed: number[]; found: number[] }
+type Phase =
+  | { kind: 'menu' }
+  | { kind: 'boss'; queue: number[]; seed: number }
+  | { kind: 'done'; cleared: number[]; missed: number[]; found: number[] }
+  | { kind: 'sentences'; queue: number[]; k: number }
 
 function HallInner({ region }: { region: number }) {
   const pack = useStore((s) => s.pack!)
   const view = useStore((s) => s.view!)
-  const settings = useStore((s) => s.save.settings)
-  const progress = useStore((s) => s.save.progress)
-  const today = useStore((s) => s.today)
-  const { closeHall, openQuest } = useStore.getState()
+  const { closeHall } = useStore.getState()
   const r = pack.world.regions[region]
   const [phase, setPhase] = useState<Phase>({ kind: 'menu' })
   const [showList, setShowList] = useState(false)
@@ -38,8 +37,10 @@ function HallInner({ region }: { region: number }) {
   const learned = view.regionLearned[region]
   const seen = view.regionSeen[region]
   const queue = bossQueue(pack, view, region)
-  const due = words.filter((i) => view.vis[i] === Vis.Active && isDue(progress[pack.words[i].id], settings.daysPerStage, today, view.stageCount))
+  const withSentences = words.filter((i) => pack.words[i].ex > 0)
+  const openWithSentences = withSentences.filter((i) => view.vis[i] !== Vis.Learned).length
   const cleared = learned >= r.count
+  const startSentences = () => setPhase({ kind: 'sentences', queue: sentenceQueue(pack, view, region, rng(Date.now())), k: 0 })
 
   const title = (
     <span className="hall-title" style={{ ['--region' as string]: r.color }}>
@@ -53,6 +54,33 @@ function HallInner({ region }: { region: number }) {
         <BossRound queue={phase.queue} seed={phase.seed} onDone={(c, m, f) => setPhase({ kind: 'done', cleared: c, missed: m, found: f })} />
       </Modal>
     )
+
+  if (phase.kind === 'sentences') {
+    const { queue: q, k } = phase
+    return (
+      <Modal title={title} onClose={closeHall} className="hall-modal" wide>
+        <div className="hall-sentences">
+          <div className="hall-sentences-head">
+            <button type="button" className="link" onClick={() => setPhase({ kind: 'menu' })}>
+              ◂ Hall
+            </button>
+            <span className="muted">
+              💬 Sentences from {r.en} · {k + 1}/{q.length}
+            </span>
+          </div>
+          {k < q.length ? (
+            <QuestCard
+              key={`${q[k]}:${k}`}
+              i={q[k]}
+              where="hall"
+              nextAfterCollect
+              onNextWord={() => setPhase(k + 1 < q.length ? { ...phase, k: k + 1 } : { kind: 'menu' })}
+            />
+          ) : null}
+        </div>
+      </Modal>
+    )
+  }
 
   if (phase.kind === 'done')
     return (
@@ -83,17 +111,6 @@ function HallInner({ region }: { region: number }) {
                   <WordChip key={i} i={i} showGloss />
                 ))}
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const { startQuest, toast } = useStore.getState()
-                  for (const i of phase.missed) if (useStore.getState().view!.vis[i] === Vis.Revealed) startQuest(i)
-                  toast(`Started ${phase.missed.length} ${phase.missed.length === 1 ? 'quest' : 'quests'}.`, 'success')
-                  setPhase({ kind: 'menu' })
-                }}
-              >
-                ⚔️ Start quests for these
-              </button>
             </>
           ) : null}
           {phase.found.length ? <p className="muted">Also discovered {phase.found.length} nearby.</p> : null}
@@ -146,11 +163,17 @@ function HallInner({ region }: { region: number }) {
             </small>
           </span>
         </button>
-        <button type="button" className="big" disabled={!due.length} onClick={() => openQuest(due[0], undefined, region)}>
-          <span className="ic">🏋️</span>
+        <button type="button" className="big" disabled={!withSentences.length} onClick={startSentences}>
+          <span className="ic">💬</span>
           <span>
-            <b>Train</b>
-            <small>{due.length ? `${due.length} ${due.length === 1 ? 'quest' : 'quests'} due today here` : 'No quests due here today'}</small>
+            <b>Sentences</b>
+            <small>
+              {openWithSentences
+                ? `Random sentences from this ${r.kind === 'wild' ? 'land' : 'town'} · each one you collect counts for every word in it`
+                : withSentences.length
+                  ? 'Everything here is learned — practice with its sentences'
+                  : 'No example sentences here'}
+            </small>
           </span>
         </button>
       </div>

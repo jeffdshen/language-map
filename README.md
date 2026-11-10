@@ -28,8 +28,9 @@ First pack: **Mandarin Chinese → English, HSK 3.0 (official 2025 exam syllabus
     density is even in every town and never gets denser further out.
 - **Playing.**
   - You are a small character. Walk with WASD / arrow keys (hold Shift to run), or click or tap
-    anywhere to walk there. Walk up to a landmark and press `E` (or click it) to open its word.
-  - `N` walks to the next unexplored word nearby. `C` re-centers the camera on you.
+    anywhere to walk there (long trips go faster). Walk up to a landmark and press `E` (or click
+    it) to open its word.
+  - `N` walks to the next word with a quest nearby. `C` re-centers the camera on you.
   - The camera stays zoomed in on one screen of a town; zoom a little with scroll, pinch or
     `+`/`−`.
   - The minimap (bottom right) shows the town you're in and its progress.
@@ -37,36 +38,44 @@ First pack: **Mandarin Chinese → English, HSK 3.0 (official 2025 exam syllabus
     progress, sorted by level.
 - **Landmarks** come from the ground they stand on: cottages, shops, barns and towers in towns;
   trees, pines, boulders, mountains, dunes, mesas, crystals, clouds and lily pads in the wilds.
-  The word is written on the landmark. Explored words get their pinyin underneath (in
-  listening-only mode it's the other way round: pinyin on the landmark, characters underneath).
-- **Quick word card.** Opening a word shows a small card with one-tap choices (keys `1`–`4`):
-  - a new word: 👁 **Reveal** (shows it and says it) or ✓ **Know it**
-  - a word you've seen: ⚔️ **Learn** (start its quests), ✓ Know it, 💬 **Example** (a sentence,
-    English on demand), or 📖 **Details**
-  - only 📖 Details opens the full page (meanings, quest stages, sentences, characters, related
-    words).
+  The word is written on the landmark with its pinyin underneath, for every word in a town
+  until you've finished all of that town's listening quests; then the town shows characters
+  only (Settings → pinyin on the map: auto / always / never). In listening-only mode it's the
+  other way round: pinyin on the landmark, characters underneath once explored.
+- **Quick word card.** Opening a word goes straight into its current quest: it plays one of the
+  word's sentences (or shows it, for reading). Then:
+  - `E` ✓ **Collect**: you understood it, so *every* word in the sentence gets a point.
+  - `Space` **Show answer**: characters, pinyin and English; this word gets its point, and `E`
+    still collects the sentence for the others.
+  - `K` **Know it**, `X` **another** sentence, `I` **details** (the full page: meanings, quest
+    stages, sentences, characters, related words), `R` replay, `N` next word.
+  - `E` always confirms: after collecting it moves on to the next sentence.
 - **Halls.** Each town's hall (the flagged building at its center, or ⚑ Hall on the minimap) has
   two modes:
   - ⚔️ **Challenge**: a quick round of 8 of the town's words, multiple choice. Every word you
     get right is marked as known; a miss reveals the word with its meaning and an example, so it
     goes on your map to learn.
-  - 🏋️ **Train**: go through the town's due quests one after another.
+  - 💬 **Sentences**: random sentences from the town's words, one after another; each one you
+    collect counts for every word in it.
 - **Fog.** Unexplored words are *dimmed* by default: their landmarks and hanzi are faded, so you
   can see the whole world and still tell what you've found. It can be set to *hidden* (only "?"
   spots next to explored words) or *off*. 🔭 Discover picks a good word near you.
 - **Quests.**
-  - Each word has four stages: **hear it in a sentence → hear it alone → read it in a sentence
+  - Each word has four stages: **hear it in sentences → hear it alone → read it in sentences
     → read it alone**.
-  - A stage needs successes on 3 different days (configurable).
-  - It's the honor system: listen or read, reveal the answer, then mark ✓ Got it or ✗ Not yet.
-    You can mark any stage, or the whole word, as already known.
+  - A sentence stage needs 10 sentences (configurable 1–30); an "alone" stage needs one check.
+    Points come from any sentence the word appears in, so you often progress several words at
+    once. Sentences are ordered easiest first (the other words at or below the word's level).
+    Words with fewer sentences loop through the ones they have.
+  - A word only counts as discovered once it earns a point; just looking doesn't reveal it.
+  - It's the honor system. You can mark any stage, or the whole word, as already known.
 - **Listening-only mode.** Toggle 👂 *Listening* vs 👂📖 *Listen + read* in the top bar. In
   listening-only mode a word counts as learned after the two listening stages, and all progress
   displays use that; the map labels words by their pinyin (the sound you'd recognize), and hall
   challenges play the word's audio instead of showing the hanzi. Reading practice is still
   recorded.
 - **Pacing.** Finishing a stage reveals a nearby or related word, and learning a word reveals
-  two, favoring easier levels. A soft cap on open words (25 by default) pauses auto-reveal.
+  two, favoring easier levels. There's no limit on how many words you have open.
 - **Character links.** In the word details, click any character to see every word that uses it:
   where they are on the map, how many you've found and learned in each region, and a sorted list.
 
@@ -76,7 +85,9 @@ First pack: **Mandarin Chinese → English, HSK 3.0 (official 2025 exam syllabus
 
 Other features:
 - Search by 汉字, pinyin (tone marks optional) or English.
-- A quest log (`q`) lists what's due today.
+- A quest log (`q`, or click the 🧭 open / ⭐ learned counters in the top bar): words in
+  progress with how close each is, discovered words not started yet, and learned words by
+  level.
 - Shortcuts: `/` search, `h` back to the start, `m` world map, `Esc` close; the legend (bottom
   left) lists the rest.
 - Bulk "I know everything up to HSK n".
