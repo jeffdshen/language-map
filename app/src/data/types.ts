@@ -20,6 +20,11 @@ export interface Word {
   /** Stable id from the official syllabus order, e.g. "w00001". */
   id: string
   hanzi: string
+  /**
+   * What text-to-speech reads for the word: `hanzi`, or (where voices would misread it, e.g. 还 huán or
+   * 地 de on their own) common characters that voices read with the word's sounds.
+   */
+  say: string
   pinyin: string
   level: number
   pos: PosCategory

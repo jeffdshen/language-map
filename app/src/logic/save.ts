@@ -19,6 +19,8 @@ export interface Settings {
   mapPinyin: MapPinyin
   /** Text-to-speech rate (0.5–1.5). */
   ttsRate: number
+  /** voiceURI of the text-to-speech voice ('' = pick the best installed voice). */
+  ttsVoice: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,6 +31,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoReveal: true,
   mapPinyin: 'auto',
   ttsRate: 0.85,
+  ttsVoice: '',
 }
 
 export function rulesOf(settings: Settings): Rules {
@@ -113,6 +116,7 @@ export function cleanSettings(raw: unknown): Settings {
           ? 'never'
           : d.mapPinyin,
     ttsRate: clamp(r.ttsRate, 0.5, 1.5, d.ttsRate),
+    ttsVoice: typeof r.ttsVoice === 'string' ? r.ttsVoice : d.ttsVoice,
   }
 }
 

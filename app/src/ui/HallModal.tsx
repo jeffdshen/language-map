@@ -218,8 +218,8 @@ function BossRound({ queue, seed, onDone }: { queue: number[]; seed: number; onD
   const hp = questions.length - cleared.length - missed.length
 
   useEffect(() => {
-    if (listening) speak(w.hanzi, lang, settings.ttsRate)
-  }, [k, listening, w.hanzi, lang, settings.ttsRate])
+    if (listening) speak(w.say, lang, settings.ttsRate)
+  }, [k, listening, w.say, lang, settings.ttsRate])
 
   const pick = (p: number | null) => {
     if (answer) return
@@ -232,7 +232,7 @@ function BossRound({ queue, seed, onDone }: { queue: number[]; seed: number; onD
     } else {
       if (useStore.getState().view!.vis[q.word] < Vis.Revealed) revealWord(q.word)
       setMissed((m) => [...m, q.word])
-      if (!listening) speak(w.hanzi, lang, settings.ttsRate)
+      if (!listening) speak(w.say, lang, settings.ttsRate)
     }
   }
 
@@ -259,7 +259,7 @@ function BossRound({ queue, seed, onDone }: { queue: number[]; seed: number; onD
       if (Number.isInteger(n) && n >= 1 && n <= q.options.length + 1) {
         e.preventDefault()
         pick(n <= q.options.length ? n - 1 : null)
-      } else if (e.key === 'r' && listening) speak(w.hanzi, lang, settings.ttsRate)
+      } else if (e.key === 'r' && listening) speak(w.say, lang, settings.ttsRate)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -282,7 +282,7 @@ function BossRound({ queue, seed, onDone }: { queue: number[]; seed: number; onD
       </div>
       <div className="boss-prompt">
         {listening && !answer ? (
-          <button type="button" className="boss-listen" onClick={() => speak(w.hanzi, lang, settings.ttsRate)} title="Play again (R)">
+          <button type="button" className="boss-listen" onClick={() => speak(w.say, lang, settings.ttsRate)} title="Play again (R)">
             🔊
           </button>
         ) : (
@@ -292,7 +292,7 @@ function BossRound({ queue, seed, onDone }: { queue: number[]; seed: number; onD
             </div>
             {answer ? (
               <div className="boss-pinyin">
-                {w.pinyin} <SpeakButton text={w.hanzi} />
+                {w.pinyin} <SpeakButton text={w.say} />
               </div>
             ) : null}
           </>

@@ -29,6 +29,14 @@ def strip_tones(s: str) -> str:
     return "".join(out)
 
 
+def syllable_tone(syl: str) -> int:
+    """'hǎo' -> 3; 'de' -> 0 (neutral tone)."""
+    for ch in syl:
+        if ch in _MARK_TO_BASE:
+            return _MARK_TO_BASE[ch][1]
+    return 0
+
+
 def search_key(s: str) -> str:
     """Lowercase, toneless, ü->v, letters only. 'Xuésheng' -> 'xuesheng'."""
     s = strip_tones(unicodedata.normalize("NFC", s)).lower().replace("ü", "v").replace("u:", "v")

@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from .sources import load_lock
+from .tts import speech_overrides
 from .words import LEVEL_LABELS, Word, pos_category
 from .world import GROUND, LAYOUT_VERSION, World, region_runs, world_stats
 
@@ -114,7 +115,10 @@ def export_pack(
                 len(by_word[i]),
             ]
         )
-    words_hash = _write_lists(out_dir / "words.json", {"fields": WORD_FIELDS}, {"rows": rows})
+    say = speech_overrides([(w.id, w.hanzi, w.pinyin) for w in words])
+    words_hash = _write_lists(
+        out_dir / "words.json", {"fields": WORD_FIELDS}, {"rows": rows, "say": say}
+    )
 
     w_, h_ = world.size
     world_hash = _write_lists(
@@ -295,6 +299,16 @@ def write_report(
             f"| {n / total:.1f} | {100 * easy / max(1, n):.0f}% |"
         )
     lines += ["", "## Starters", "", ", ".join(words[i].hanzi for i in manifest["starters"]), ""]
+    by_id = {w.id: w for w in words}
+    hints = speech_overrides([(w.id, w.hanzi, w.pinyin) for w in words])
+    lines += [
+        "## Speech hints",
+        "",
+        "Words a voice would misread from their characters are spoken as these stand-ins.",
+        "",
+        ", ".join(f"{by_id[i].hanzi} {by_id[i].pinyin} → {say}" for i, say in hints),
+        "",
+    ]
     lines += ["## Stats", "", "```json", json.dumps(manifest["stats"], indent=1), "```", ""]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")

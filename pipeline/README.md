@@ -28,7 +28,8 @@ word positions move (the app uses it to tell the player the map changed).
 | `relate.py` | Finds semantic neighbors (k = 8) and an *anchor* for each word: the best lower-level word by meaning, shared characters (idf-weighted), containment, and topic. |
 | `world.py` | Builds the tile world (see the module docstring and [docs/design.md](../docs/design.md#world-generation)): Poisson-disk hamlets ("lots") of 1–7 words on a wobbly island, a force layout (level → distance from the center, anchors and neighbors pull together, repulsion keeps density even), size-capped regions per level (a capacity-constrained k-means on position *and* meaning, solved by optimal transport, so a town's words share a meaning), region names from the curated stems in `config/zh-en/places.json` matched by meaning (Hungarian, each stem used once), quadratic-assignment swaps so related words share a lot, soft region borders, a hall per region, A* roads/trails/bridges, water and terrain. |
 | `sentences.py` | Selects up to 10 Tatoeba sentences per word, easiest first: ranked by how many of the other words are above the word's level (and by how much), then length. The app credits every word in a collected sentence, so easy sentences matter. Segments them with jieba, disambiguates readings with pypinyin, and keeps only simplified script. Reports how many chosen sentences are "easy" (no other word above the level) per level. |
-| `export.py` | Writes `manifest.json`, `words.json`, `world.json`, `sentences.json` and `legacy-ids.json`, plus `reports/zh-en.md` (counts, density by distance, region meaning coherence, and every region with its most frequent words, for reviewing names). |
+| `tts.py` | Speech hints: for words a voice would misread from their characters (a character alone with a less common reading, like 还 huán or 地 de, a character taught with two readings, like 长 cháng / zhǎng, or the rarer reading of a homograph, like 结果 jiēguǒ), picks common characters that are almost only ever read the wanted way (环, 的, 常 / 掌, 接果). How often each character is read each way is measured over wordfreq's words with pypinyin. |
+| `export.py` | Writes `manifest.json`, `words.json`, `world.json`, `sentences.json` and `legacy-ids.json`, plus `reports/zh-en.md` (counts, density by distance, region meaning coherence, every region with its most frequent words for reviewing names, and the speech hints). |
 | `preview.py` | Renders `reports/zh-en-preview.png` (whole world with region labels) and `reports/zh-en-closeup.png` (the center at game scale). |
 
 `uv run pytest` checks, among other things, that the world is deterministic, that no two words
@@ -47,9 +48,11 @@ pointing down.
   word count, region count), starter words, counts, sources with licenses and checksums, and
   build stats. The app always revalidates it, then fetches the other files as
   `file?v=<contentHash>`.
-- **`words.json`**: `{"fields": [...], "rows": [[...], ...]}`, one row per word. Fields: `id,
-  hanzi, pinyin, level, pos, theme, region, x, y, anchor, freq, glosses, neighbors, trad, alts,
-  ex`.
+- **`words.json`**: `{"fields": [...], "rows": [[...], ...], "say": [...]}`, one row per word.
+  Fields: `id, hanzi, pinyin, level, pos, theme, region, x, y, anchor, freq, glosses, neighbors,
+  trad, alts, ex`.
+  - `say` lists `[id, text]` for words that text-to-speech should read from other characters
+    (see `tts.py`); every other word is spoken as its `hanzi`.
   - `id` is the syllabus id (`w00001`…).
   - `ex` is the number of example sentences for the word (0–10), so the app knows each stage's
     requirement before `sentences.json` loads.

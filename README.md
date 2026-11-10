@@ -98,7 +98,10 @@ Other features:
   Back button.
 
 Audio uses the browser's built-in speech synthesis (`zh-CN`); if no Chinese voice is installed,
-the app tells you to read the pinyin aloud instead.
+the app tells you to read the pinyin aloud instead. It picks the most natural mainland Mandarin
+voice it finds (Edge's online "Natural" voices sound best on Windows), and **Settings → Voice**
+lets you choose another. A word whose characters a voice would misread on their own (还 huán,
+地 de, 长 zhǎng) is spoken from characters that only have that sound.
 
 Progress is stored locally in your browser (IndexedDB, falling back to localStorage). Nothing is
 sent anywhere, so use **Settings → Export progress** to back up or move to another device. Tabs

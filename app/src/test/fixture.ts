@@ -62,6 +62,7 @@ export function makePack(): Pack {
     i,
     id: `w${String(i + 1).padStart(5, '0')}`,
     hanzi,
+    say: hanzi,
     pinyin,
     level,
     pos: 'noun',

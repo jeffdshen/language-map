@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { makePack } from '../test/fixture'
-import { cellIndex, legacyMap, regionAt, wordsNear } from './pack'
+import { cellIndex, decodeWords, legacyMap, regionAt, wordsNear } from './pack'
 
 describe('pack', () => {
   const pack = makePack()
@@ -40,5 +40,15 @@ describe('pack', () => {
     expect(map.has('L1-0002')).toBe(false)
     expect(map.get('L1-0003')).toBe('w00012')
     expect(map.get('L7-0001')).toBe('w11000')
+  })
+
+  it('speaks a word as its speech hint, else as its characters', () => {
+    const fields = 'id,hanzi,pinyin,level,pos,theme,region,x,y,anchor,freq,glosses,neighbors,trad,alts,ex'.split(',')
+    const row = (id: string, hanzi: string, pinyin: string) =>
+      [id, hanzi, pinyin, 1, 'adv', 0, 0, 0, 0, -1, 5, ['x'], [], hanzi, [], 0] as Parameters<typeof decodeWords>[0]['rows'][number]
+    const rows = [row('w00001', '还', 'hái'), row('w00002', '还', 'huán')]
+    const words = decodeWords({ fields, rows, say: [['w00002', '环']] })
+    expect(words.map((w) => w.say)).toEqual(['还', '环'])
+    expect(decodeWords({ fields, rows })[1].say).toBe('还')
   })
 })

@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import type { QuestMode } from '../logic/progress'
 import type { FogMode, FogScope, MapPinyin } from '../logic/save'
 import { useStore } from '../store'
-import { speak } from '../tts'
+import { onVoicesChanged, speak, voicesFor } from '../tts'
 import { Modal } from './common'
 
 /** Number input that keeps a local draft and only commits on blur or Enter, so typing isn't clamped mid-edit. */
@@ -34,6 +34,29 @@ function NumberField({
       onBlur={commit}
       onKeyDown={(e) => e.key === 'Enter' && commit()}
     />
+  )
+}
+
+/** Text-to-speech voice for the pack's language, best first; Auto follows the ranking as voices load. */
+function VoiceField({ lang, value, onChange }: { lang: string; value: string; onChange: (uri: string) => void }) {
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => onVoicesChanged(rerender), [])
+  const voices = voicesFor(lang)
+  const missing = value !== '' && !voices.some((v) => v.voiceURI === value)
+  return (
+    <label className="field">
+      <span>Voice (natural/online voices sound best; on Windows, Edge has the most natural Chinese voices)</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{voices.length ? `Auto — ${voices[0].name}` : 'Auto — no Chinese voice found on this device'}</option>
+        {missing ? <option value={value}>Saved voice (not on this device — using Auto)</option> : null}
+        {voices.map((v) => (
+          <option key={v.voiceURI} value={v.voiceURI}>
+            {v.name} ({v.lang}
+            {v.localService ? '' : ', online'})
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
 
@@ -135,6 +158,7 @@ export function SettingsModal() {
               </button>
             </span>
           </label>
+          <VoiceField lang={pack.manifest.target.tts} value={settings.ttsVoice} onChange={(uri) => updateSettings({ ttsVoice: uri })} />
         </section>
         <section>
           <h3>Progress</h3>

@@ -45,7 +45,7 @@ function WordPanelInner({ i }: { i: number }) {
         </div>
         {showForm ? (
           <div className="pinyin-big">
-            {w.pinyin} <SpeakButton text={w.hanzi} />
+            {w.pinyin} <SpeakButton text={w.say} />
           </div>
         ) : null}
         {showForm && w.trad && w.trad !== w.hanzi ? <div className="trad">Traditional: {w.trad}</div> : null}

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { MapView } from './map/MapView'
 import { useStore } from './store'
+import { setPreferredVoice } from './tts'
 import { AboutModal } from './ui/AboutModal'
 import { CharModal } from './ui/CharModal'
 import { HallModal } from './ui/HallModal'
@@ -50,6 +51,9 @@ export default function App() {
   const loadError = useStore((s) => s.loadError)
   const saveError = useStore((s) => s.saveError)
   const popover = useStore((s) => s.selected !== null && !s.details)
+  const ttsVoice = useStore((s) => s.save.settings.ttsVoice)
+
+  useEffect(() => setPreferredVoice(ttsVoice), [ttsVoice])
 
   useEffect(() => {
     const { init, tick } = useStore.getState()

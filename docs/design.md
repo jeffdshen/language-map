@@ -103,7 +103,7 @@ the browser. GitHub Pages deploys it from Actions on every push to `main`.
 | Example sentences (+ English) | Tatoeba cmn↔eng (pinned npm snapshot) | CC BY 2.0 FR |
 | Semantic vectors (build time only) | ConceptNet Numberbatch 17.06 | CC BY-SA 4.0 |
 | Word frequency | wordfreq | CC BY-SA 4.0 (data) |
-| Audio | Browser Web Speech API (zh-CN) | n/a |
+| Audio | Browser Web Speech API (zh-CN); speech hints for misread characters from pypinyin + wordfreq | n/a |
 
 All inputs are pinned with sha256 checksums in `pipeline/sources.lock.json`. The code is MIT.
 The generated pack is CC BY-SA 4.0 (see `ATTRIBUTION.md`).
@@ -320,7 +320,8 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
 - **Settings:**
   - quest mode, fog mode and scope
   - sentences needed per sentence stage (1–30, default 10), auto-reveal
-  - pinyin on the map (auto / always / never), TTS rate
+  - pinyin on the map (auto / always / never), TTS rate and voice (auto = the best-ranked
+    mainland Mandarin voice)
   - bulk "known up to HSK n"
   - export/import/reset
 - **Progress storage:**

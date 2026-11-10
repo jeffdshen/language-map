@@ -83,14 +83,21 @@ export function hanChars(s: string): string[] {
   return out
 }
 
-export function decodeWords(file: RowFile<WordRow>): Word[] {
+export interface WordsFile extends RowFile<WordRow> {
+  /** [word id, text to speak] for words voices would misread from their characters. */
+  say?: [string, string][]
+}
+
+export function decodeWords(file: WordsFile): Word[] {
   if (file.fields.join() !== WORD_FIELDS.join()) {
     throw new Error(`Unexpected word fields: ${file.fields.join(',')}`)
   }
+  const say = new Map(file.say ?? [])
   return file.rows.map((r, i) => ({
     i,
     id: r[0],
     hanzi: r[1],
+    say: say.get(r[0]) ?? r[1],
     pinyin: r[2],
     level: r[3],
     pos: r[4],
@@ -231,7 +238,7 @@ export async function loadPack(baseUrl: string): Promise<Pack> {
   if (manifest.schema !== 4) throw new Error(`Unsupported pack schema ${manifest.schema}`)
   const [worldFile, wordFile] = await Promise.all([
     getJson<WorldFile>(dataUrl(baseUrl, manifest, manifest.files.world)),
-    getJson<RowFile<WordRow>>(dataUrl(baseUrl, manifest, manifest.files.words)),
+    getJson<WordsFile>(dataUrl(baseUrl, manifest, manifest.files.words)),
   ])
   return buildPack(manifest, decodeWorld(worldFile), decodeWords(wordFile), baseUrl)
 }

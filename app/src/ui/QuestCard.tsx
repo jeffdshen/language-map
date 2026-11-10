@@ -129,7 +129,7 @@ export function QuestCard({
     }
   }, [data, pack])
 
-  const spoken = typeof task === 'object' && task.mode !== 'done' ? (task.mode === 'sentence' ? sentenceText(task.s) : w.hanzi) : null
+  const spoken = typeof task === 'object' && task.mode !== 'done' ? (task.mode === 'sentence' ? sentenceText(task.s) : w.say) : null
   const rate = settings.ttsRate
   const play = (slow = false) => {
     if (spoken) speak(spoken, lang, slow ? rate * 0.65 : rate)
@@ -254,7 +254,7 @@ export function QuestCard({
         <div className="pop-sub">
           <span className="pop-pinyin">
             {mystery ? null : listeningMode ? <span lang="zh-Hans">{w.hanzi}</span> : hidePinyin ? <span className="muted">?</span> : w.pinyin}
-            {mystery ? null : <SpeakButton text={w.hanzi} />}
+            {mystery ? null : <SpeakButton text={w.say} />}
             <span className="pop-level">{levelLabel(w.level)}</span>
           </span>
           {showGloss ? (
