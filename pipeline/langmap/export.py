@@ -242,6 +242,12 @@ def write_report(
         ),
         "- Words per land cell by distance from the center (must never increase outward): "
         + ", ".join(str(d) for d in manifest["stats"]["world"]["density_by_distance"]),
+        "- Region meaning coherence by level (mean cosine to the region's centroid; a random "
+        "split of the same level in brackets): "
+        + ", ".join(
+            f"{LEVEL_LABELS[int(lvl)]} {a} ({b})"
+            for lvl, (a, b) in manifest["stats"]["world"]["region_coherence"].items()
+        ),
         "",
         "## Themes",
         "",
@@ -255,14 +261,20 @@ def write_report(
             + " | ".join(map(str, counts))
             + f" | {sum(counts)} |"
         )
-    lines += ["", "## Regions", ""]
+    lines += ["", "## Regions", "", "Most frequent words of each region.", ""]
+    by_region: dict[int, list[Word]] = {}
+    for w in sorted(words, key=lambda w: (-w.freq, w.index)):
+        by_region.setdefault(int(world.region[w.index]), []).append(w)
     for lvl in range(1, 8):
         regs = [r for r in world.regions if r["level"] == lvl]
         sizes = sorted({r["count"] for r in regs})
         lines.append(
-            f"**{LEVEL_LABELS[lvl]}** ({len(regs)} regions of {'–'.join(map(str, sizes))} "
-            "words): " + ", ".join(f"{r['zh']} {r['en']}" for r in regs)
+            f"**{LEVEL_LABELS[lvl]}** ({len(regs)} regions of {'–'.join(map(str, sizes))} words)"
         )
+        lines.append("")
+        for r in regs:
+            sample = " ".join(w.hanzi for w in by_region.get(r["id"], [])[:8])
+            lines.append(f"- {r['zh']} {r['en']}: {sample}")
         lines.append("")
     lines += ["## Sentence coverage", "", "| Level | Words with sentences |", "|---|---|"]
     for lvl, (have, total) in manifest["stats"]["sentences"]["coverage_by_level"].items():

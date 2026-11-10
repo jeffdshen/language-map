@@ -2,6 +2,7 @@ import { Vis } from '../logic/explore'
 import { currentStage, STAGES } from '../logic/progress'
 import { useStore } from '../store'
 import { Dots } from './common'
+import { useSwipeDismiss } from './useSwipeDismiss'
 import { levelLabel } from './text'
 
 export function QuestLog() {
@@ -10,6 +11,7 @@ export function QuestLog() {
   const view = useStore((s) => s.view!)
   const save = useStore((s) => s.save)
   const { setQuestLog, openQuest, select, startQuest } = useStore.getState()
+  const swipe = useSwipeDismiss(() => setQuestLog(false))
   if (!open) return null
   const need = save.settings.daysPerStage
   const due: number[] = []
@@ -60,8 +62,8 @@ export function QuestLog() {
   }
 
   return (
-    <aside className="panel quest-log" aria-label="Quest log">
-      <div className="panel-head">
+    <aside className="panel quest-log" aria-label="Quest log" data-sheet>
+      <div className="panel-head grip" {...swipe}>
         <h2>Quest log</h2>
         <button type="button" className="icon close" onClick={() => setQuestLog(false)} aria-label="Close">
           ×

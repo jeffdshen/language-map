@@ -209,18 +209,26 @@ export function wordsNear(pack: Pack, x: number, y: number, radius: number): num
   return out.sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((p) => p[1])
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
+async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init)
   if (!res.ok) throw new Error(`Failed to load ${url}: ${res.status}`)
   return (await res.json()) as T
 }
 
+/**
+ * The manifest is always revalidated, and the other files are requested as `file?v=<contentHash>`,
+ * so after a deploy the HTTP cache can never mix files from two different builds.
+ */
+function dataUrl(baseUrl: string, manifest: Manifest, file: string): string {
+  return `${baseUrl}${file}?v=${encodeURIComponent(manifest.contentHash)}`
+}
+
 export async function loadPack(baseUrl: string): Promise<Pack> {
-  const manifest = await getJson<Manifest>(`${baseUrl}manifest.json`)
+  const manifest = await getJson<Manifest>(`${baseUrl}manifest.json`, { cache: 'no-cache' })
   if (manifest.schema !== 3) throw new Error(`Unsupported pack schema ${manifest.schema}`)
   const [worldFile, wordFile] = await Promise.all([
-    getJson<WorldFile>(`${baseUrl}${manifest.files.world}`),
-    getJson<RowFile<WordRow>>(`${baseUrl}${manifest.files.words}`),
+    getJson<WorldFile>(dataUrl(baseUrl, manifest, manifest.files.world)),
+    getJson<RowFile<WordRow>>(dataUrl(baseUrl, manifest, manifest.files.words)),
   ])
   return buildPack(manifest, decodeWorld(worldFile), decodeWords(wordFile), baseUrl)
 }
@@ -233,7 +241,7 @@ export interface LegacyIds {
 export async function loadLegacyIds(pack: Pack): Promise<Map<string, string>> {
   const file = pack.manifest.files.legacy
   if (!file) return new Map()
-  const data = await getJson<LegacyIds>(`${pack.baseUrl}${file}`)
+  const data = await getJson<LegacyIds>(dataUrl(pack.baseUrl, pack.manifest, file))
   return legacyMap(data)
 }
 
@@ -252,7 +260,7 @@ let sentencePromise: Promise<SentenceData> | null = null
 export function loadSentences(pack: Pack): Promise<SentenceData> {
   if (!sentencePromise) {
     sentencePromise = getJson<RowFile<[number, number, string, SegToken[]]>>(
-      `${pack.baseUrl}${pack.manifest.files.sentences}`,
+      dataUrl(pack.baseUrl, pack.manifest, pack.manifest.files.sentences),
     )
       .then((file) => ({
         sentences: file.rows.map(

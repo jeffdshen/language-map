@@ -966,10 +966,23 @@ button.badge.region:hover {
   padding: 16px 18px 18px;
 }
 
-.word-panel > .close {
+/* Back/close stay pinned to the top of the panel while it scrolls (a zero-height sticky bar;
+   sticky offsets count from inside the panel's padding). */
+.sheet-bar {
+  position: sticky;
+  top: 0;
+  height: 0;
+  z-index: 3;
+}
+
+.sheet-bar > button {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: -8px;
+  background: var(--paper);
+}
+
+.sheet-bar > .close {
+  right: -10px;
 }
 
 .word-head {
@@ -1239,6 +1252,15 @@ button.badge.region:hover {
   padding: 14px 16px;
 }
 
+.quest-log .panel-head {
+  position: sticky;
+  top: -14px;
+  z-index: 2;
+  margin: -14px -16px 8px;
+  padding: 10px 10px 4px 16px;
+  background: var(--paper);
+}
+
 .quest-log section {
   margin-bottom: 16px;
 }
@@ -1359,6 +1381,7 @@ button.badge.region:hover {
   box-shadow: 0 20px 60px rgba(30, 20, 5, 0.35);
   width: min(520px, 100%);
   max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1748,7 +1771,151 @@ table.sources td {
     bottom: 0;
     width: auto;
     max-height: 62vh;
+    max-height: 62dvh;
     border-radius: 16px 16px 0 0;
+    padding-top: 0;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Bottom sheets: a grip bar on top that stays put while the sheet scrolls; swipe it down to close. */
+  .sheet-bar {
+    top: 0;
+    height: 44px;
+    margin: 0 -18px 4px;
+    background: var(--paper);
+  }
+
+  .sheet-bar > button {
+    top: 2px;
+  }
+
+  .sheet-bar > .close {
+    right: 4px;
+  }
+
+  .sheet-bar > .back {
+    right: 46px;
+  }
+
+  .quest-log .panel-head {
+    top: 0;
+    margin: 0 -16px 8px;
+    padding: 16px 4px 2px 16px;
+  }
+
+  .grip {
+    position: relative;
+    touch-action: none;
+  }
+
+  .grip::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 40px;
+    height: 4px;
+    margin-left: -20px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+
+  .sheet-bar.grip {
+    position: sticky;
+  }
+
+  button.icon.close,
+  .sheet-bar > .back {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  /* Dialogs become bottom sheets, leaving a strip of map above to tap away. */
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 48px 0 0;
+  }
+
+  .modal,
+  .modal.wide {
+    width: 100%;
+    max-height: 100%;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    animation: sheet-up 0.18s ease-out;
+  }
+
+  .modal-head {
+    padding: 14px 4px 0 16px;
+  }
+
+  .modal-body {
+    padding: 10px 14px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .popover {
+    touch-action: none;
+  }
+
+  .stats {
+    gap: 3px;
+  }
+
+  .stat {
+    gap: 3px;
+    padding: 3px 6px;
+  }
+
+  .stats button.icon {
+    padding: 4px 5px;
+  }
+
+  .mode-toggle,
+  .explore-btn {
+    padding: 4px 7px;
+  }
+
+  /* Welcome: compact, with the start controls always in view. */
+  .welcome-hero {
+    margin: 0 0 8px;
+  }
+
+  .welcome-hero .hero-zh {
+    font-size: 2.2rem;
+  }
+
+  .welcome-hero h2 {
+    font-size: 1.15rem;
+  }
+
+  .welcome-points {
+    gap: 10px;
+    font-size: 0.92rem;
+  }
+
+  .welcome-points li {
+    grid-template-columns: 26px 1fr;
+    gap: 6px;
+  }
+
+  .welcome-points li > span {
+    font-size: 1.2rem;
+  }
+
+  .welcome-start {
+    position: sticky;
+    bottom: calc(-16px - env(safe-area-inset-bottom, 0px));
+    margin: 0 -14px calc(-16px - env(safe-area-inset-bottom, 0px));
+    padding: 10px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+    background: var(--paper);
+    box-shadow: 0 -8px 12px -6px rgba(60, 40, 10, 0.15);
+  }
+
+  .welcome-start label,
+  .welcome-start select,
+  .welcome-start button {
+    width: 100%;
   }
 
   .quest-log {
@@ -2028,6 +2195,13 @@ ul.region-list {
   line-height: 1.1;
   padding: 0 4px;
   border-radius: 8px;
+}
+
+.pop-hanzi.pinyin {
+  font-family: inherit;
+  font-size: 1.7rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .pop-hanzi.active {
@@ -2396,10 +2570,8 @@ button.boss-listen {
   color: #8a5a00;
 }
 
-.word-panel > .back {
-  position: absolute;
-  top: 8px;
-  right: 46px;
+.sheet-bar > .back {
+  right: 28px;
   font-size: 1.5rem;
   color: var(--ink-soft);
 }
@@ -2455,4 +2627,18 @@ button.boss-listen {
 .legend.open {
   max-height: calc(100vh - 100px);
   overflow-y: auto;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0.6;
+  }
+}
+
+@media (max-width: 700px) {
+  .legend.open {
+    max-height: calc(100vh - 124px);
+    max-height: calc(100dvh - 124px);
+  }
 }

@@ -51,7 +51,7 @@ from scipy.stats import qmc
 
 from .words import Word, pos_category
 
-LAYOUT_VERSION = 3
+LAYOUT_VERSION = 4
 SEED = 2026
 WILD_LEVEL = 7
 DENSITY = {"town": 0.07, "wild": 0.05}  # words per land cell
@@ -73,6 +73,10 @@ FORCE_ITERS = 160
 HALL_CLEAR = 3.0  # halls keep at least this distance from words
 LAYOUT_PULL = 0.12  # weight of the layout position against neighbor affinity (step 4)
 AFFINITY_K = 6  # strongest relations kept per word in step 4
+REGION_MEANING = 30.0  # weight of meaning against layout distance when filling regions (step 3)
+REGION_MEANING_ITERS = 40
+NAME_KEYWORDS = 0.6  # weight of a label's keywords found in the region (vs centroid cosine)
+NAME_MIN_SCORE = 0.3  # below this, a region is named after one of its own nouns instead
 MIN_WATER = 6  # smallest lake/pond kept (cells)
 
 # Ground codes. Words, halls and the plaza never stand on water ('~', '=').
@@ -311,11 +315,15 @@ def ot_assign(points: np.ndarray, seeds: np.ndarray, caps: np.ndarray) -> np.nda
     argmin(cost - weight) is optimal for its own counts, so successive shortest paths on the
     small seed graph then fix the remaining imbalance exactly. Meant for few seeds (K <~ 100).
     """
-    n, K = len(points), len(seeds)
+    return ot_assign_cost(((points[:, None, :] - seeds[None, :, :]) ** 2).sum(-1), caps)
+
+
+def ot_assign_cost(D: np.ndarray, caps: np.ndarray) -> np.ndarray:
+    """ot_assign for an arbitrary (n, K) cost matrix."""
+    n, K = D.shape
     assert int(caps.sum()) == n, (int(caps.sum()), n)
     if K == 1:
         return np.zeros(n, dtype=np.int64)
-    D = ((points[:, None, :] - seeds[None, :, :]) ** 2).sum(-1)
     w = np.zeros(K)
     for _ in range(30):
         moved = 0.0
@@ -379,6 +387,44 @@ def _ssp_balance(D: np.ndarray, label: np.ndarray, caps: np.ndarray) -> np.ndarr
         cnt[path[0]] -= 1
         cnt[path[-1]] += 1
     return label
+
+
+def unit_rows(e: np.ndarray) -> np.ndarray:
+    e = e.astype(np.float64)
+    return e / np.maximum(np.linalg.norm(e, axis=-1, keepdims=True), 1e-12)
+
+
+def semantic_regions(
+    X: np.ndarray,
+    E: np.ndarray,
+    seeds: np.ndarray,
+    caps: np.ndarray,
+    alpha: float = 0.0,
+    iters: int = 0,
+) -> np.ndarray:
+    """Words of one level -> regions with exact sizes. Starts from the layout partition (OT on
+    squared distance to the region centers), then alternates meaning centroids and OT on
+    distance / median distance + alpha * (1 - cosine to the region's centroid): a
+    capacity-constrained k-means in which meaning outweighs a few cells of travel."""
+    Dsp = ((X[:, None, :] - seeds[None, :, :]) ** 2).sum(-1)
+    lab = ot_assign_cost(Dsp, caps)
+    K = len(seeds)
+    if K == 1 or alpha <= 0:
+        return lab
+    scale = max(float(np.median(Dsp[np.arange(len(X)), lab])), 1e-9)
+    for _ in range(iters):
+        C = unit_rows(np.stack([E[lab == k].mean(axis=0) for k in range(K)]))
+        new = ot_assign_cost(Dsp / scale + alpha * (1.0 - E @ C.T), caps)
+        if np.array_equal(new, lab):
+            break
+        lab = new
+    return lab
+
+
+def region_coherence(E: np.ndarray, members: list[np.ndarray]) -> float:
+    """Mean cosine of words to their region's meaning centroid."""
+    tot = sum(float((E[m] @ unit_rows(E[m].mean(axis=0))).sum()) for m in members)
+    return tot / max(sum(len(m) for m in members), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +731,7 @@ def build_world(
     anchor: np.ndarray,
     neighbors: np.ndarray,
     themes_cfg: list[dict],
+    labels: list[dict] | None = None,
 ) -> World:
     k = len(themes_cfg)
     levels = np.array([w.level for w in words])
@@ -693,7 +740,9 @@ def build_world(
     slots = make_slots(counts)
     X = force_layout(words, emb, theme, anchor, neighbors, k, slots.bands)
 
-    # Lots -> regions, then words -> regions (OT from layout positions), then words -> slots.
+    # Lots -> regions, then words -> regions (OT on layout distance and meaning), then
+    # words -> slots.
+    E = unit_rows(emb)
     lot_region, reg_level = _region_lots(slots, counts)
     R = len(reg_level)
     slot_reg = lot_region[slots.lot]
@@ -704,7 +753,21 @@ def build_world(
     for L in range(1, 8):
         idx = np.where(levels == L)[0]
         rs = np.where(reg_lv == L)[0]
-        region[idx] = rs[ot_assign(X[idx], seeds[rs], caps[rs])]
+        region[idx] = rs[
+            semantic_regions(
+                X[idx], E[idx], seeds[rs], caps[rs], REGION_MEANING, REGION_MEANING_ITERS
+            )
+        ]
+    rng = np.random.default_rng(SEED)
+    coherence = {}
+    for L in range(1, 8):
+        rs = np.where(reg_lv == L)[0]
+        shuffled = rng.permutation(np.where(levels == L)[0])
+        cuts = np.cumsum(caps[rs])[:-1]
+        coherence[str(L)] = [
+            round(region_coherence(E, [np.where(region == r)[0] for r in rs]), 3),
+            round(region_coherence(E, np.split(shuffled, cuts)), 3),
+        ]
     char_count: Counter[str] = Counter(c for w in words for c in w.chars)
     idf = {c: math.log(n / v) + 1.0 for c, v in char_count.items()}
     pos = np.zeros((n, 2), dtype=np.int64)
@@ -781,8 +844,12 @@ def build_world(
         fields,
     )
     halls_world = halls + [x0, y0]
-    regions = _describe_regions(
-        words, region, reg_level, theme, themes_cfg, ground, region_grid, halls_world
+    if labels is None:
+        from .themes import load_place_labels
+
+        labels = load_place_labels()
+    regions, name_scores = _describe_regions(
+        words, E, region, reg_level, theme, themes_cfg, labels, ground, region_grid, halls_world
     )
     stats = {
         "regions": R,
@@ -791,6 +858,12 @@ def build_world(
         "land_cells": int(land.sum()),
         "road_cells": int(road.sum()),
         "band_radii": [round(float(b), 2) for b in slots.bands],
+        "region_coherence": coherence,
+        "name_score": {
+            "mean": round(float(np.mean(name_scores)), 3),
+            "min": round(float(np.min(name_scores)), 3),
+            "fallback": int(sum(r["label"] < 0 for r in regions)),
+        },
         "region_sizes": {
             str(L): [int(caps[r]) for r in range(R) if reg_level[r] == L] for L in range(1, 8)
         },
@@ -1312,11 +1385,41 @@ def _color(base: str, level: int, r: int) -> str:
     return "#" + "".join(f"{round(c * 255):02x}" for c in out)
 
 
+def _label_regions(
+    words: list[Word], E: np.ndarray, region: np.ndarray, R: int, labels: list[dict]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Best name label per region, each label used at most once (Hungarian on the summed
+    score). Score = cosine between the label's meaning (mean of its keyword words) and the
+    region's meaning centroid, plus NAME_KEYWORDS x the share of the label's keywords that
+    live in the region. Returns (label index or -1, score) per region."""
+    by_hanzi: dict[str, int] = {}
+    for i, w in enumerate(words):
+        by_hanzi.setdefault(w.hanzi, i)
+    C = unit_rows(np.stack([E[region == r].mean(axis=0) for r in range(R)]))
+    cols, S = [], []
+    for j, lab in enumerate(labels):
+        kw = [by_hanzi[h] for h in dict.fromkeys([*lab["kw"], lab["zh"]]) if h in by_hanzi]
+        if not kw:
+            continue
+        share = np.bincount(region[kw], minlength=R) / len(kw)
+        S.append(C @ unit_rows(E[kw].mean(axis=0)) + NAME_KEYWORDS * share)
+        cols.append(j)
+    pick = np.full(R, -1, dtype=np.int64)
+    score = np.zeros(R)
+    if cols:
+        M = np.stack(S, axis=1)
+        rows, cc = linear_sum_assignment(-M)
+        pick[rows] = np.array(cols)[cc]
+        score[rows] = M[rows, cc]
+    return pick, score
+
+
 def _describe_regions(
-    words, region, reg_level, theme, themes_cfg, ground, region_grid, halls
-) -> list[dict]:
+    words, E, region, reg_level, theme, themes_cfg, labels, ground, region_grid, halls
+) -> tuple[list[dict], np.ndarray]:
     out = []
     used: Counter[str] = Counter()
+    pick, score = _label_regions(words, E, region, len(reg_level), labels)
     for r, L in enumerate(reg_level):
         members = [words[i] for i in np.where(region == r)[0]]
         tcount = Counter(int(theme[w.index]) for w in members)
@@ -1331,7 +1434,11 @@ def _describe_regions(
         else:
             place_zh, place_en = cfg["place"]["zh"], cfg["place"]["en"]
             kind = "town"
-        hub_zh, hub_en = _hub_name(members, theme, dom, cfg["en"])
+        if pick[r] >= 0 and score[r] >= NAME_MIN_SCORE:
+            hub_zh, hub_en = labels[pick[r]]["zh"], labels[pick[r]]["en"]
+        else:
+            pick[r] = -1
+            hub_zh, hub_en = _hub_name(members, theme, dom, cfg["en"])
         name_zh = (hub_zh or cfg["zh"]) + place_zh
         name_en = f"{hub_en} {place_en}"
         used[name_en] += 1
@@ -1347,6 +1454,7 @@ def _describe_regions(
                 "theme": dom,
                 "zh": name_zh,
                 "en": name_en,
+                "label": int(pick[r]),
                 "count": len(members),
                 "cells": int(cells.sum()),
                 "x": int(halls[r][0]),
@@ -1354,7 +1462,7 @@ def _describe_regions(
                 "color": _color(cfg["color"], L, r),
             }
         )
-    return out
+    return out, score
 
 
 def region_runs(region_grid: np.ndarray) -> list[list[int]]:

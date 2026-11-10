@@ -6,6 +6,7 @@ import { currentStage, isDue, STAGES, stageDone, wordStatus } from '../logic/pro
 import { useStore } from '../store'
 import { Dots, LevelBadge, RegionTag, SentenceView, SpeakButton, WordChip } from './common'
 import { levelLabel, POS_LABEL } from './text'
+import { useSwipeDismiss } from './useSwipeDismiss'
 
 export function WordPanel() {
   const i = useStore((s) => s.selected)
@@ -21,6 +22,7 @@ function WordPanelInner({ i }: { i: number }) {
   const settings = useStore((s) => s.save.settings)
   const from = useStore((s) => s.selectedFrom)
   const { select, revealWord, markKnown, setDetails } = useStore.getState()
+  const swipe = useSwipeDismiss(() => select(null))
   const w = pack.words[i]
   const fog = settings.fogMode
   const discovered = vis >= Vis.Revealed
@@ -28,13 +30,16 @@ function WordPanelInner({ i }: { i: number }) {
   const showMeaning = discovered || fog === 'off' || from === 'search'
 
   return (
-    <aside className="panel word-panel" aria-label="Word details">
-      <button type="button" className="icon back" onClick={() => setDetails(false)} aria-label="Back" title="Back to the quick view">
-        ‹
-      </button>
-      <button type="button" className="icon close" onClick={() => select(null)} aria-label="Close" title="Close (Esc)">
-        ×
-      </button>
+    <aside className="panel word-panel" aria-label="Word details" data-sheet>
+      {/* Pinned while the page scrolls; on phones it is the sheet's grip (swipe down to close). */}
+      <div className="sheet-bar grip" {...swipe}>
+        <button type="button" className="icon back" onClick={() => setDetails(false)} aria-label="Back" title="Back to the quick view">
+          ‹
+        </button>
+        <button type="button" className="icon close" onClick={() => select(null)} aria-label="Close" title="Close (Esc)">
+          ×
+        </button>
+      </div>
       <header className="word-head" style={{ ['--region' as string]: pack.world.regions[w.region]?.color ?? pack.world.themes[w.theme].color }}>
         <div className="hanzi-big" lang="zh-Hans">
           {showForm ? w.hanzi : '?'}

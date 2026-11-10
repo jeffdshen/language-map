@@ -5,6 +5,7 @@ import { Vis } from '../logic/explore'
 import { useStore } from '../store'
 import { speak } from '../tts'
 import { levelLabel, tokenPinyin } from './text'
+import { useSwipeDismiss } from './useSwipeDismiss'
 
 export function LevelBadge({ level }: { level: number }) {
   return <span className={`badge level level-${level}`}>{levelLabel(level)}</span>
@@ -157,6 +158,8 @@ export function Modal({
   wide?: boolean
 }) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const downOnBackdrop = useRef(false)
+  const swipe = useSwipeDismiss(onClose)
   useEffect(() => {
     // Move focus into the dialog so keys don't hit buttons behind it; restore on close.
     const prev = document.activeElement as HTMLElement | null
@@ -175,16 +178,25 @@ export function Modal({
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
+    <div
+      className="modal-backdrop"
+      // Close on a full tap/click on the backdrop (not a drag that started inside the dialog).
+      onPointerDown={(e) => (downOnBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => {
+        if (downOnBackdrop.current && e.target === e.currentTarget) onClose?.()
+        downOnBackdrop.current = false
+      }}
+    >
       <div
         ref={dialogRef}
         tabIndex={-1}
         className={`modal ${wide ? 'wide' : ''} ${className ?? ''}`}
         role="dialog"
         aria-modal="true"
+        data-sheet
       >
         {title || onClose ? (
-          <div className="modal-head">
+          <div className={onClose ? 'modal-head grip' : 'modal-head'} {...swipe}>
             {title ? <h2>{title}</h2> : <span />}
             {onClose ? (
               <button type="button" className="icon close" onClick={onClose} aria-label="Close">

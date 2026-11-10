@@ -20,8 +20,9 @@ First pack: **Mandarin Chinese → English, HSK 3.0 (official 2025 exam syllabus
   - Words live in small **hamlets** of 1–7 related words, with open land, roads and paths in
     between, so a town is something you wander through rather than a packed grid.
   - Each band is split into **towns** of similar size (about 25 words in HSK 1, up to 60 in
-    HSK 6), named after a typical word, e.g. 苹果果园 *Apple Orchard* or 年钟楼
-    *Year Clocktower*. Each town has a **hall**, and roads link the halls.
+    HSK 6). A town gathers words with related meanings and is named for what they share, e.g.
+    家人村 *Family Village*, 食物果园 *Food Orchard*, 天气驿 *Weather Crossroads* or
+    数字钟楼 *Number Clocktower*. Each town has a **hall**, and roads link the halls.
   - HSK 7–9 is the **wilderness**: bigger, sparser regions of forests, lakes, peaks and dunes.
   - Related words are pulled together (similar meaning, shared characters, "builds on"). Word
     density is even in every town and never gets denser further out.
@@ -36,7 +37,8 @@ First pack: **Mandarin Chinese → English, HSK 3.0 (official 2025 exam syllabus
     progress, sorted by level.
 - **Landmarks** come from the ground they stand on: cottages, shops, barns and towers in towns;
   trees, pines, boulders, mountains, dunes, mesas, crystals, clouds and lily pads in the wilds.
-  The word is written on the landmark. Explored words get their pinyin underneath.
+  The word is written on the landmark. Explored words get their pinyin underneath (in
+  listening-only mode it's the other way round: pinyin on the landmark, characters underneath).
 - **Quick word card.** Opening a word shows a small card with one-tap choices (keys `1`–`4`):
   - a new word: 👁 **Reveal** (shows it and says it) or ✓ **Know it**
   - a word you've seen: ⚔️ **Learn** (start its quests), ✓ Know it, 💬 **Example** (a sentence,
@@ -60,8 +62,9 @@ First pack: **Mandarin Chinese → English, HSK 3.0 (official 2025 exam syllabus
     You can mark any stage, or the whole word, as already known.
 - **Listening-only mode.** Toggle 👂 *Listening* vs 👂📖 *Listen + read* in the top bar. In
   listening-only mode a word counts as learned after the two listening stages, and all progress
-  displays use that; hall challenges play the word's audio instead of showing the hanzi.
-  Reading practice is still recorded.
+  displays use that; the map labels words by their pinyin (the sound you'd recognize), and hall
+  challenges play the word's audio instead of showing the hanzi. Reading practice is still
+  recorded.
 - **Pacing.** Finishing a stage reveals a nearby or related word, and learning a word reveals
   two, favoring easier levels. A soft cap on open words (25 by default) pauses auto-reveal.
 - **Character links.** In the word details, click any character to see every word that uses it:
@@ -78,15 +81,19 @@ Other features:
   left) lists the rest.
 - Bulk "I know everything up to HSK n".
 - Progress export/import.
-- Works on mobile (tap to walk; the word card becomes a bottom sheet).
+- Works on mobile: tap to walk; the word card, details, quest log and dialogs are bottom sheets
+  that close with ×, a tap on the map above them, a swipe down on their grip, or the phone's
+  Back button.
 
 Audio uses the browser's built-in speech synthesis (`zh-CN`); if no Chinese voice is installed,
 the app tells you to read the pinyin aloud instead.
 
 Progress is stored locally in your browser (IndexedDB, falling back to localStorage). Nothing is
 sent anywhere, so use **Settings → Export progress** to back up or move to another device. Tabs
-open on the same browser stay in sync. Saves from the earlier (2021-list) version are migrated
-automatically by matching words.
+open on the same browser stay in sync. Progress is keyed by the syllabus word ids, not by map
+position, so it survives new versions of the site: if an update redraws the map, everything you
+found and learned is still there (you'll see a short note once). Saves from the earlier
+(2021-list) version are migrated automatically by matching words.
 
 ## Run it
 

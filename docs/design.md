@@ -8,6 +8,11 @@ Mandarin Chinese with the HSK 3.0 syllabus. The design stays language-agnostic.
 - **Language pair:** Mandarin Chinese → English (the learner sees English glosses).
 - **Platform:** static web app, local-first. Progress is kept in IndexedDB, with JSON
   export/import.
+- **Progress outlives the map.** Saves are keyed by syllabus word ids (`w00001`…), never by
+  position or region, so redeploying with a new layout keeps everything. When
+  `LAYOUT_VERSION` changes the app only shows a one-time "the map was redrawn" note. The
+  manifest is always revalidated and the other pack files are fetched as `file?v=<contentHash>`,
+  so a browser cache can never mix two builds after a deploy.
 - **Word list: the official 2025 HSK exam syllabus.**
   - 11,000 words: HSK 1–6 plus 7–9, all in v1.
   - It replaced the 2021 HSK 3.0 draft list (ivankra/hsk30). Old saves are migrated by
@@ -25,6 +30,9 @@ Mandarin Chinese with the HSK 3.0 syllabus. The design stays language-agnostic.
     screen of a town" (zoom limited to 0.55–1.6× of the default).
   - The minimap and a world map (overview) replace infinite zoom.
   - Regions are towns with similar word counts, not geometric sectors.
+- **Regions by meaning.** Within each level band, a town's words should share a meaning, and
+  its name says what that is (*Family Village*, *Weather Crossroads*). Compact shapes still
+  matter, so this is a trade-off; further out (big wilderness regions) the groups are looser.
   - No link lines are drawn on the map. Relationships are listed in the word details instead,
     and the character view shows where a character appears.
 - **Walkable, not packed.** Words sit in small hamlets (1–7 related words) with open land, roads
@@ -35,6 +43,9 @@ Mandarin Chinese with the HSK 3.0 syllabus. The design stays language-agnostic.
 - **Landmarks come from the biome, not the word.** A word is written on a cottage, shop, barn,
   tree, mountain, dune, cloud, lily pad, … picked from the ground it stands on. They don't try
   to depict the meaning, and the art avoids leaning on Chinese clichés.
+- **Mobile: every popup is easy to dismiss.** Panels and dialogs are bottom sheets that leave a
+  strip of map above (tap it to close), keep their × pinned while scrolling, close with a swipe
+  down on the grip, and close with the phone's Back button.
 - **Light interaction first.** Opening a word shows a small card with one-tap choices (reveal /
   know it / learn / example). Only "Details" opens the full page, so going through known words
   is fast.
@@ -133,8 +144,13 @@ progress.
 3. **Regions.** The lots of each level are grouped into compact regions of at most
    `REGION_CAP[level]` words (aiming for 88% of it, since lots can't be split): 30 for HSK 1,
    rising to 70 for HSK 6, and 120 for wilderness. That gives 172 regions: 12, 7, 15, 23, 31
-   and 30 towns, plus 54 wilds. Words join regions by capacity-constrained optimal transport
-   from their layout position.
+   and 30 towns, plus 54 wilds. The region *shapes* (which lots/slots form a region) come from
+   geography; which *words* go to each region is a capacity-constrained k-means over position
+   and meaning (`semantic_regions`): the cost of putting a word in a region is its squared
+   distance (normalized by the median) plus `REGION_MEANING` (30) × (1 − cosine to the
+   region's meaning centroid), solved exactly by optimal transport, re-centering for up to 40
+   rounds. Mean cosine to the region centroid (`region_coherence` in the report) is about
+   0.41–0.54 per level against 0.22–0.36 for a random split of the same level.
 4. **Neighbors.** Inside a region, words are first matched to slots by layout position
    (Hungarian algorithm), then improved by a quadratic-assignment local search: the best
    pairwise swap is applied until none helps. The cost pulls related words close (sparse
@@ -159,10 +175,15 @@ progress.
    - The wilderness uses elevation/moisture noise, biased per topic, to pick forest, hills,
      marsh, dunes or red rock, peaks and snow, with lakes in open land.
    - Sand lines the coast. Words, halls and the plaza never stand on water.
-8. **Names.** A town is named after its most frequent concrete noun with a one-word gloss
-   (preferring its dominant topic) plus that topic's place suffix, e.g. 苹果果园 *Apple
-   Orchard*. Wilds use their dominant ground (林 forest, 谷 canyon, 沙丘 dunes, …). Duplicate
-   names get a suffix (·二, ·三).
+8. **Names.** `config/zh-en/places.json` lists ~300 curated name stems, each with a few HSK
+   keywords (e.g. 家人 *Family*: 爸爸, 妈妈, 哥哥, …). A stem's score for a region is the
+   cosine between its keywords' mean vector and the region's meaning centroid, plus 0.6 × the
+   share of its keywords that live in the region. The Hungarian algorithm gives every region a
+   different stem (mean score 0.9; below 0.3 it would fall back to the region's most typical
+   noun, which currently never happens). The stem gets the place suffix of the region's
+   dominant topic (towns: 村, 果园, 钟楼, 驿 …) or wilderness ground (林, 沙丘, 山 …), e.g.
+   家人村 *Family Village*, 天气驿 *Weather Crossroads*, 宇宙山 *Cosmos Peaks*. The report
+   lists every region with its most frequent words, to review names.
 
 `world_stats` reports density by distance and mean distance by level. The build prints them,
 and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-preview.png` and
@@ -194,6 +215,9 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
   - State is shown by quest marks ("!" when due), stage pips under the hanzi, a ★ when learned,
     and a highlight ring on the landmark you're next to.
   - Pinyin plates are placed in priority order with an occupancy grid to avoid overlap.
+  - In listening-only mode the landmark shows the pinyin (listeners know the sound, not the
+    writing) and the optional second plate shows the characters; the word card also leads with
+    pinyin.
 - **Player** (`map/player.ts`, `logic/walk.ts`):
   - WASD/arrows walk (Shift runs) with collision against landmarks, halls, water and the sea.
   - Clicking or tapping walks there along an A* path; clicking a landmark walks up to it and
@@ -241,8 +265,15 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
   - builds on / leads to
   - per-character links (open the character view)
   - similar meaning
-
-  On mobile the card and details are bottom sheets.
+- **Mobile** (≤ 700 px wide):
+  - The card, details, quest log and every dialog are bottom sheets (dialogs leave a 48 px strip
+    of map above; the welcome screen keeps its start controls pinned at the bottom).
+  - Sheets have a grip: a touch swipe down (> 70 px) closes them (`ui/useSwipeDismiss.ts`); the
+    × stays pinned while the sheet scrolls and is a 40 px target.
+  - The phone's Back button closes the topmost popup (`App.tsx`): while any popup is open the
+    app keeps one extra history entry; Back pops it and closes one layer (dialog → quest → hall
+    → details → card → quest log, like Esc), and closing the last popup another way removes
+    the entry again.
 - **Quest:**
   - A modal per stage: listen or read, show the answer (hanzi, pinyin, English, highlighted
     word), then self-grade.
@@ -291,11 +322,18 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
    - player character (WASD, click/tap to walk, `E`, `N`)
    - light word card; full details only on demand
    - region halls with Challenge and Train
+9. ✅ **M8 Meaningful towns, listening labels, mobile:**
+   - regions grouped by meaning as well as position, and named from curated stems matched by
+     meaning (no more odd names such as "Son Plaza")
+   - pinyin on the map in listening-only mode
+   - bottom sheets with swipe-to-close, pinned close buttons, Back button support, compact
+     top bar and welcome screen on phones
+   - pack files cache-busted by `contentHash`, so a deploy never mixes old and new data
 
 ## Ideas / next
-- **Better names:** avoid the "·二/·三" duplicate suffixes and odd stems (e.g. "Wrong Plaza")
-  with a larger name vocabulary (second noun, topic adjectives). Give wilderness regions proper
-  place names.
+- **Names:** wilderness names are just "stem + ground" (e.g. *Faintness Crystal Fields*); a
+  second, evocative word list for wilds and a one-line blurb per town ("words about family and
+  home") on the world map.
 - **Landmark variety:** more axes per word (e.g. size by frequency, special landmarks for very
   common words or characters), and NPC-like walkers in towns.
 - **Hall bosses with a story:** a named keeper per hall, a short sentence-based final round

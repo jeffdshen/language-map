@@ -22,6 +22,31 @@ function wordFromHash(): string | null {
   return m ? decodeURIComponent(m[1]) : null
 }
 
+/** Keep `#w=<id>` in the URL in step with the selected word (without adding history entries). */
+function writeHash() {
+  const { pack, selected } = useStore.getState()
+  if (!pack) return
+  const hash = selected === null ? '' : `#w=${encodeURIComponent(pack.words[selected].id)}`
+  if (location.hash !== hash) history.replaceState(history.state, '', `${location.pathname}${location.search}${hash}`)
+}
+
+type StoreState = ReturnType<typeof useStore.getState>
+
+/** Anything the back button / Esc can close (the welcome screen has no close). */
+function overlayOpen(s: StoreState): boolean {
+  return (s.modal !== null && s.modal !== 'welcome') || s.quest !== null || s.hall !== null || s.selected !== null || s.questLogOpen
+}
+
+/** Close the topmost overlay, in the same order as Esc. */
+function closeTop(s: StoreState) {
+  if (s.modal !== null && s.modal !== 'welcome') s.setModal(null)
+  else if (s.quest) s.closeQuest()
+  else if (s.hall !== null) s.closeHall()
+  else if (s.selected !== null && s.details) s.setDetails(false)
+  else if (s.selected !== null) s.select(null)
+  else if (s.questLogOpen) s.setQuestLog(false)
+}
+
 export default function App() {
   const ready = useStore((s) => s.pack !== null && s.view !== null)
   const loadError = useStore((s) => s.loadError)
@@ -51,12 +76,45 @@ export default function App() {
   useEffect(
     () =>
       useStore.subscribe((s, prev) => {
-        if (s.selected === prev.selected || !s.pack) return
-        const hash = s.selected === null ? '' : `#w=${encodeURIComponent(s.pack.words[s.selected].id)}`
-        history.replaceState(null, '', `${location.pathname}${location.search}${hash}`)
+        if (s.selected !== prev.selected) writeHash()
       }),
     [],
   )
+
+  // Phone back button (and browser Back) closes the topmost popup instead of leaving the page:
+  // while anything is open we keep one extra history entry, and drop it when the last popup closes.
+  useEffect(() => {
+    let pushed = false
+    let ownBack = false
+    const sync = (s: StoreState) => {
+      if (!s.pack) return
+      const open = overlayOpen(s)
+      if (open && !pushed) {
+        history.pushState({ langmapOverlay: true }, '')
+        pushed = true
+      } else if (!open && pushed) {
+        pushed = false
+        ownBack = true
+        history.back()
+      }
+    }
+    const onPop = () => {
+      if (ownBack) ownBack = false
+      else if (pushed) {
+        pushed = false
+        closeTop(useStore.getState())
+      }
+      sync(useStore.getState())
+      writeHash()
+    }
+    const unsub = useStore.subscribe(sync)
+    window.addEventListener('popstate', onPop)
+    sync(useStore.getState())
+    return () => {
+      unsub()
+      window.removeEventListener('popstate', onPop)
+    }
+  }, [])
 
   useEffect(() => {
     const onHash = () => {

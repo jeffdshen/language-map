@@ -18,6 +18,11 @@ def load_theme_config(pack: str = "zh-en") -> dict:
     return json.loads((CONFIG_DIR / pack / "themes.json").read_text(encoding="utf-8"))
 
 
+def load_place_labels(pack: str = "zh-en") -> list[dict]:
+    """Region name stems ({zh, en, kw}), see config/<pack>/places.json."""
+    return json.loads((CONFIG_DIR / pack / "places.json").read_text(encoding="utf-8"))["labels"]
+
+
 def assign_themes(
     words: list[Word], emb: np.ndarray, cfg: dict, vecs: dict, refine_iters: int = 2
 ) -> tuple[np.ndarray, np.ndarray]:

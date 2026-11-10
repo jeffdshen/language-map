@@ -18,7 +18,7 @@ def build(pack: str = "zh-en", preview: bool = True) -> None:
     from .export import export_pack, write_report
     from .relate import anchors, semantic_neighbors
     from .sentences import select_sentences
-    from .themes import assign_themes, load_theme_config
+    from .themes import assign_themes, load_place_labels, load_theme_config
     from .words import char_levels, legacy_id_map, load_words
     from .world import build_world, world_stats
 
@@ -39,7 +39,7 @@ def build(pack: str = "zh-en", preview: bool = True) -> None:
     neighbors = semantic_neighbors(emb)
     anchor, _ = anchors(words, emb, theme)
     step("relations computed")
-    world = build_world(words, emb, theme, anchor, neighbors, themes)
+    world = build_world(words, emb, theme, anchor, neighbors, themes, load_place_labels(pack))
     step(f"world: {len(world.regions)} regions, {world_stats(world, words)}")
     sentences, by_word, sstats = select_sentences(words, char_levels(words))
     step(f"sentences: {sstats['sentences_used']}")

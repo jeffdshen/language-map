@@ -1,4 +1,5 @@
 import itertools
+import json
 from collections import deque
 
 import numpy as np
@@ -7,17 +8,22 @@ from scipy.ndimage import label
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 
+from langmap.paths import DATA_DIR
 from langmap.themes import load_theme_config
 from langmap.words import Word
 from langmap.world import (
     GAP_X,
     GAP_Y,
     REGION_CAP,
+    _label_regions,
     build_world,
     ot_assign,
     qap_cost,
     qap_swap,
+    region_coherence,
     region_runs,
+    semantic_regions,
+    unit_rows,
     world_stats,
 )
 
@@ -160,9 +166,19 @@ def test_density_never_increases_outward(built):
     words, w = built
     s = world_stats(w, words)
     d = s["density_by_distance"]
-    assert all(b <= a * 1.06 for a, b in itertools.pairwise(d)), d
+    # ~150 words per band in this small world: allow sampling noise; the real pack is checked
+    # strictly below.
+    assert all(b <= a * 1.12 for a, b in itertools.pairwise(d)), d
     mean_r = s["mean_distance_by_level"]
     assert all(b > a for a, b in itertools.pairwise(mean_r)), mean_r
+
+
+def test_committed_pack_density_never_increases_outward():
+    manifest = DATA_DIR / "zh-en" / "manifest.json"
+    if not manifest.exists():
+        pytest.skip("no committed pack")
+    d = json.loads(manifest.read_text(encoding="utf-8"))["stats"]["world"]["density_by_distance"]
+    assert all(b <= a * 1.02 for a, b in itertools.pairwise(d)), d
 
 
 def test_region_runs_roundtrip(built):
@@ -184,6 +200,56 @@ def test_ot_assign_is_optimal_and_exact():
     D = ((pts[:, None, :] - seeds[cols][None, :, :]) ** 2).sum(-1)
     r, c = linear_sum_assignment(D)
     assert cost == pytest.approx(D[r, c].sum())
+
+
+def test_semantic_regions_exact_and_more_coherent():
+    rng = np.random.default_rng(4)
+    topics = rng.normal(size=(4, 8))
+    t = rng.integers(0, 4, 120)
+    E = unit_rows(topics[t] + 0.4 * rng.normal(size=(120, 8)))
+    X = rng.uniform(0, 30, (120, 2))
+    seeds = rng.uniform(0, 30, (4, 2))
+    caps = np.array([30, 25, 35, 30])
+    base = semantic_regions(X, E, seeds, caps)
+    lab = semantic_regions(X, E, seeds, caps, alpha=30.0, iters=40)
+    assert np.array_equal(np.bincount(lab, minlength=4), caps)
+
+    def coh(lb):
+        return region_coherence(E, [np.where(lb == k)[0] for k in range(4)])
+
+    assert coh(lab) > coh(base) + 0.1
+
+
+def test_region_names_unique(built):
+    _, world = built
+    assert len({r["en"] for r in world.regions}) == len(world.regions)
+    assert len({r["zh"] for r in world.regions}) == len(world.regions)
+
+
+def test_labels_used_once_and_matched_by_keywords(built):
+    words, world = built
+    R = len(world.regions)
+    E = unit_rows(_synthetic()[1])
+    # Label j's keywords are exactly region j's words: every region should get its own label.
+    labels = [
+        {
+            "zh": f"名{r}",
+            "en": f"L{r}",
+            "kw": [words[i].hanzi for i in np.where(world.region == r)[0]],
+        }
+        for r in range(R)
+    ][::-1]
+    pick, score = _label_regions(words, E, world.region, R, labels)
+    assert sorted(pick.tolist()) == list(range(R))
+    assert all(labels[pick[r]]["en"] == f"L{r}" for r in range(R))
+    assert score.min() > 1.0
+
+
+def test_regions_group_by_meaning(built):
+    _, world = built
+    for lvl, (actual, random) in world.stats["region_coherence"].items():
+        if len([r for r in world.regions if r["level"] == int(lvl)]) > 1:
+            assert actual > random, lvl
 
 
 def test_qap_swap_never_worsens():

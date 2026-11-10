@@ -90,7 +90,7 @@ export function SettingsModal() {
               checked={settings.mapPinyin}
               onChange={(e) => updateSettings({ mapPinyin: e.target.checked })}
             />
-            <span>Show pinyin under words on the map</span>
+            <span>Show a second label under words on the map (pinyin; characters in listening mode)</span>
           </label>
         </section>
         <section>

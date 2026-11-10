@@ -8,6 +8,7 @@ import { useStore } from '../store'
 import { speak } from '../tts'
 import { SentenceView, SpeakButton } from './common'
 import { levelLabel, sentenceText } from './text'
+import { useSwipeDismiss } from './useSwipeDismiss'
 
 interface Action {
   icon: string
@@ -40,6 +41,7 @@ function PopoverInner({ i }: { i: number }) {
   const mystery = !explored && settings.fogMode === 'hidden'
   const due = vis === Vis.Active && isDue(wp, need, today, count)
   const lang = pack.manifest.target.tts
+  const swipe = useSwipeDismiss(() => select(null))
 
   const [data, setData] = useState<SentenceData | null>(null)
   const [sent, setSent] = useState(-1)
@@ -113,19 +115,23 @@ function PopoverInner({ i }: { i: number }) {
   const color = pack.world.regions[w.region]?.color ?? '#999'
 
   return (
-    <section className="popover" aria-label="Word" style={{ ['--region' as string]: color }}>
+    <section className="popover" aria-label="Word" style={{ ['--region' as string]: color }} data-sheet {...swipe}>
       <button type="button" className="icon close" onClick={() => select(null)} aria-label="Close" title="Close (Esc)">
         ×
       </button>
       <div className="pop-head">
-        <span className={`pop-hanzi ${vis === Vis.Learned ? 'learned' : vis === Vis.Active ? 'active' : ''}`} lang="zh-Hans">
-          {mystery ? '?' : w.hanzi}
+        {/* Listening mode leads with the sound (as on the map); the characters come second. */}
+        <span
+          className={`pop-hanzi ${listening && !mystery ? 'pinyin' : ''} ${vis === Vis.Learned ? 'learned' : vis === Vis.Active ? 'active' : ''}`}
+          lang={listening ? undefined : 'zh-Hans'}
+        >
+          {mystery ? '?' : listening ? w.pinyin : w.hanzi}
         </span>
         <div className="pop-sub">
           {explored ? (
             <>
               <span className="pop-pinyin">
-                {w.pinyin} <SpeakButton text={w.hanzi} />
+                {listening ? <span lang="zh-Hans">{w.hanzi}</span> : w.pinyin} <SpeakButton text={w.hanzi} />
               </span>
               <span className="pop-gloss">
                 {vis === Vis.Learned ? '★ ' : ''}

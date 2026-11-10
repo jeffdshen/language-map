@@ -69,6 +69,8 @@ interface Transform {
 
 const FONT_ZH = '"Noto Sans SC", "Noto Sans CJK SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Zen Hei", sans-serif'
 const FONT_UI = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+/** Pinyin main labels are this fraction of the character size. */
+const PY_MAIN = 0.78
 
 export const STATUS_COLORS = {
   learned: '#e0a526',
@@ -130,6 +132,8 @@ export class MapRenderer {
   private wordHash: Float32Array = new Float32Array(0)
   /** Landmark width, in cells. */
   private wordW: Float32Array = new Float32Array(0)
+  /** Landmark widths when pinyin is the main label (listening mode). */
+  private wordWPy: Float32Array = new Float32Array(0)
   private wordSnow: Uint8Array = new Uint8Array(0)
   /** Ground drawn under each cell (roads and bridges get the ground around them). */
   private baseGround: Int16Array = new Int16Array(0)
@@ -211,6 +215,7 @@ export class MapRenderer {
       return code === 'k' || code === 's' ? 1 : 0
     })
     this.wordW = Float32Array.from(pack.words, (w, i) => landmarkWidth(this.wordKind[i], textWidth(w.hanzi) * 0.36))
+    this.wordWPy = Float32Array.from(pack.words, (w, i) => landmarkWidth(this.wordKind[i], textWidth(w.pinyin) * 0.36 * PY_MAIN))
 
     this.noDecor = new Uint8Array(N)
     const clear = (x: number, y: number) => {
@@ -484,7 +489,7 @@ export class MapRenderer {
         const k = gy * world.w + gx
         const j = wordAt[k]
         if (j >= 0 && (this.drawable(j) || j === st.selected)) {
-          const half = Math.max(0.5, this.wordW[j] / 2)
+          const half = Math.max(0.5, this.width(j) / 2)
           const top = LANDMARK_TOP[this.wordKind[j]] + 0.1
           if (Math.abs(wx - x) < half && wy >= y - top && wy <= y + 0.6) {
             const d = Math.abs(wx - x) + Math.abs(wy - y)
@@ -861,6 +866,32 @@ export class MapRenderer {
     return Math.min(26, Math.max(10, u * 0.36))
   }
 
+  /** Listening mode: words are labeled by their sound (pinyin) instead of their characters. */
+  private get listening(): boolean {
+    return this.state?.settings.questMode === 'listening'
+  }
+
+  private width(i: number): number {
+    return (this.listening ? this.wordWPy : this.wordW)[i]
+  }
+
+  /** Font for a word's main label, shrinking long pinyin to fit about 2.5 cells. */
+  private labelFont(text: string, zhPx: number, u: number, weight: number, pinyin: boolean): number {
+    const ctx = this.ctx
+    if (!pinyin) {
+      ctx.font = `${weight} ${zhPx}px ${FONT_ZH}`
+      return zhPx
+    }
+    let px = zhPx * PY_MAIN
+    ctx.font = `${weight} ${px}px ${FONT_UI}`
+    const tw = ctx.measureText(text).width
+    if (tw > u * 2.5) {
+      px = Math.max(8, (px * u * 2.5) / tw)
+      ctx.font = `${weight} ${px}px ${FONT_UI}`
+    }
+    return px
+  }
+
   private drawScene(t: Transform): Drawn[] {
     const st = this.state!
     const { pack } = st
@@ -925,7 +956,7 @@ export class MapRenderer {
     const unexplored = v <= Vis.Frontier
     const mystery = unexplored && fogMode === 'hidden'
     const dimmed = unexplored && fogMode === 'dim'
-    const W = this.wordW[i] * u
+    const W = this.width(i) * u
     const sel = i === st.selected
     const near = this.isNear({ word: i })
     if (sel || near || i === st.hovered) this.drawRing(sx, sy, W, sel ? 2 : near ? 1 : 0)
@@ -939,13 +970,16 @@ export class MapRenderer {
       snow: this.wordSnow[i] === 1,
     })
     const zhPx = this.zhPx(u)
-    const text = mystery ? '?' : w.hanzi
-    const tw = textWidth(text) * zhPx
+    const pinyin = this.listening && !mystery
+    const text = mystery ? '?' : pinyin ? w.pinyin : w.hanzi
+    const plate = v === Vis.Active || v === Vis.Learned
+    const px = mystery ? zhPx : this.labelFont(text, zhPx, u, plate ? 700 : 600, pinyin)
+    const tw = pinyin ? ctx.measureText(text).width : textWidth(text) * zhPx
     const half = tw / 2 + zhPx * 0.3
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.lineJoin = 'round'
-    if (v === Vis.Active || v === Vis.Learned) {
+    if (plate) {
       const learned = v === Vis.Learned
       roundRect(ctx, spot.x - half, spot.y - zhPx * 0.68, half * 2, zhPx * 1.36, zhPx * 0.3)
       ctx.fillStyle = learned ? 'rgb(255, 236, 170)' : 'rgba(228, 239, 255, 0.96)'
@@ -953,13 +987,12 @@ export class MapRenderer {
       ctx.lineWidth = Math.max(1.2, u * 0.03)
       ctx.strokeStyle = learned ? 'rgb(176, 124, 20)' : STATUS_COLORS.active
       ctx.stroke()
-      ctx.font = `700 ${zhPx}px ${FONT_ZH}`
       ctx.fillStyle = learned ? '#5a3800' : '#17305e'
       ctx.fillText(text, spot.x, spot.y + zhPx * 0.04)
     } else {
       ctx.globalAlpha = dimmed ? (v === Vis.Frontier ? 0.85 : 0.62) : 1
-      ctx.font = `${mystery ? 800 : 600} ${zhPx}px ${mystery ? FONT_UI : FONT_ZH}`
-      ctx.lineWidth = Math.max(2.5, zhPx * 0.2)
+      if (mystery) ctx.font = `800 ${zhPx}px ${FONT_UI}`
+      ctx.lineWidth = Math.max(2.5, px * 0.2)
       ctx.strokeStyle = spot.halo
       ctx.strokeText(text, spot.x, spot.y + zhPx * 0.04)
       ctx.fillStyle = spot.ink
@@ -1023,17 +1056,21 @@ export class MapRenderer {
       if (v === Vis.Learned) this.drawStar(spot.x + half, spot.y - zhPx * 0.62, Math.max(5, zhPx * 0.36))
       if (v === Vis.Active) this.drawPips(spot.x, spot.y + zhPx * 0.68, zhPx, view.stages[i], view.stageCount)
       const explored = v >= Vis.Revealed
+      // The second label: pinyin under the characters, or the characters under the pinyin when
+      // listening.
       if (settings.mapPinyin && u >= 30 && (explored || settings.fogMode === 'off')) {
-        const pyPx = Math.max(9, Math.min(14, u * 0.22))
-        ctx.font = `600 ${pyPx}px ${FONT_UI}`
+        const listening = settings.questMode === 'listening'
+        const sub = listening ? w.hanzi : w.pinyin
+        const subPx = Math.max(9, Math.min(listening ? 16 : 14, u * (listening ? 0.26 : 0.22)))
+        ctx.font = `600 ${subPx}px ${listening ? FONT_ZH : FONT_UI}`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'top'
         ctx.lineJoin = 'round'
         ctx.lineWidth = 3
         ctx.strokeStyle = 'rgba(255, 252, 244, 0.9)'
-        ctx.strokeText(w.pinyin, sx, sy + u * 0.48)
+        ctx.strokeText(sub, sx, sy + u * 0.48)
         ctx.fillStyle = '#3d342a'
-        ctx.fillText(w.pinyin, sx, sy + u * 0.48)
+        ctx.fillText(sub, sx, sy + u * 0.48)
       }
     }
 
@@ -1043,7 +1080,7 @@ export class MapRenderer {
       let hy = 0
       if ('word' in this.near) {
         const w = words[this.near.word]
-        hx = t.ox + w.x * u + (this.wordW[this.near.word] / 2) * u + u * 0.12
+        hx = t.ox + w.x * u + (this.width(this.near.word) / 2) * u + u * 0.12
         hy = t.oy + w.y * u - u * 0.1
       } else {
         const r = world.regions[this.near.hall]
