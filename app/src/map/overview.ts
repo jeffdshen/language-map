@@ -156,6 +156,105 @@ export function regionCells(world: World): number[][] {
   return out
 }
 
+const outlineCache = new WeakMap<World, Map<number, Float32Array>>()
+
+/**
+ * Border of a region (against other regions and the sea) as straight segments `x1, y1, x2, y2, …` along cell
+ * edges, in world coordinates (cell (x, y) spans x..x+1, y..y+1).
+ */
+export function regionOutline(world: World, region: number): Float32Array {
+  let byRegion = outlineCache.get(world)
+  if (!byRegion) outlineCache.set(world, (byRegion = new Map()))
+  const hit = byRegion.get(region)
+  if (hit) return hit
+  const cells = regionCells(world)[region] ?? []
+  let gx0 = Infinity
+  let gy0 = Infinity
+  let gx1 = -Infinity
+  let gy1 = -Infinity
+  for (let n = 0; n < cells.length; n += 2) {
+    const gx = cells[n] - world.x0
+    const gy = cells[n + 1] - world.y0
+    gx0 = Math.min(gx0, gx)
+    gy0 = Math.min(gy0, gy)
+    gx1 = Math.max(gx1, gx)
+    gy1 = Math.max(gy1, gy)
+  }
+  const inside = (gx: number, gy: number) =>
+    gx >= 0 && gy >= 0 && gx < world.w && gy < world.h && world.regionGrid[gy * world.w + gx] === region
+  const out: number[] = []
+  // Horizontal edges on the line above row gy, merged into runs.
+  for (let gy = gy0; gy <= gy1 + 1; gy++) {
+    let start = -1
+    for (let gx = gx0; gx <= gx1 + 1; gx++) {
+      const edge = gx <= gx1 && inside(gx, gy - 1) !== inside(gx, gy)
+      if (edge && start < 0) start = gx
+      else if (!edge && start >= 0) {
+        out.push(start + world.x0, gy + world.y0, gx + world.x0, gy + world.y0)
+        start = -1
+      }
+    }
+  }
+  // Vertical edges on the line left of column gx.
+  for (let gx = gx0; gx <= gx1 + 1; gx++) {
+    let start = -1
+    for (let gy = gy0; gy <= gy1 + 1; gy++) {
+      const edge = gy <= gy1 && inside(gx - 1, gy) !== inside(gx, gy)
+      if (edge && start < 0) start = gy
+      else if (!edge && start >= 0) {
+        out.push(gx + world.x0, start + world.y0, gx + world.x0, gy + world.y0)
+        start = -1
+      }
+    }
+  }
+  const arr = Float32Array.from(out)
+  byRegion.set(region, arr)
+  return arr
+}
+
+/** Zoom and pan of an overview in a W × H box: cell x is drawn at `(x - b.x0) * scale + ox` (same for y). */
+export interface OverviewView {
+  /** 1 = the whole map fits the box. */
+  z: number
+  ox: number
+  oy: number
+}
+
+export const MAX_OVERVIEW_ZOOM = 10
+
+/** CSS pixels per cell. */
+export function viewScale(b: Bounds, W: number, H: number, z: number): number {
+  return Math.min(W / b.w, H / b.h) * z
+}
+
+/** Clamp the zoom, keep the map covering the box, and center it along an axis where it fits. */
+export function clampView(v: OverviewView, b: Bounds, W: number, H: number): OverviewView {
+  const z = Math.min(MAX_OVERVIEW_ZOOM, Math.max(1, v.z))
+  const s = viewScale(b, W, H, z)
+  const fit = (o: number, content: number, box: number) =>
+    content <= box ? (box - content) / 2 : Math.min(0, Math.max(box - content, o))
+  return { z, ox: fit(v.ox, b.w * s, W), oy: fit(v.oy, b.h * s, H) }
+}
+
+/** Zoom by `factor`, keeping the map point under box point (px, py) in place. */
+export function zoomViewAt(v: OverviewView, b: Bounds, W: number, H: number, px: number, py: number, factor: number): OverviewView {
+  const cur = clampView(v, b, W, H)
+  const s0 = viewScale(b, W, H, cur.z)
+  const z = Math.min(MAX_OVERVIEW_ZOOM, Math.max(1, cur.z * factor))
+  const s1 = viewScale(b, W, H, z)
+  return clampView({ z, ox: px - ((px - cur.ox) / s0) * s1, oy: py - ((py - cur.oy) / s0) * s1 }, b, W, H)
+}
+
+/** The cell drawn at box point (px, py), or null outside the map. */
+export function viewCellAt(v: OverviewView, b: Bounds, W: number, H: number, px: number, py: number): [number, number] | null {
+  const cur = clampView(v, b, W, H)
+  const s = viewScale(b, W, H, cur.z)
+  const x = Math.floor((px - cur.ox) / s) + b.x0
+  const y = Math.floor((py - cur.oy) / s) + b.y0
+  if (x < b.x0 || y < b.y0 || x >= b.x0 + b.w || y >= b.y0 + b.h) return null
+  return [x, y]
+}
+
 /** Paint a translucent highlight over a region (on a context already scaled to cells). */
 export function fillRegion(ctx: CanvasRenderingContext2D, world: World, region: number, b: Bounds, style: string): void {
   const cells = regionCells(world)[region]

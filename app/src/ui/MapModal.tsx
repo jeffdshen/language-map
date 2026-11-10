@@ -49,6 +49,7 @@ function MapModalInner() {
             image={image}
             highlight={focus}
             here={herePos}
+            zoomable
             onHover={(cell) => setHover(cell ? regionAt(world, cell[0], cell[1]) : -1)}
             onPick={([x, y]) => {
               if (regionAt(world, x, y) >= 0) travel(x, y)
@@ -66,13 +67,16 @@ function MapModalInner() {
                 </span>
               </>
             ) : (
-              <span className="muted">Hover a region to see its progress; click to travel there.</span>
+              <span className="muted">
+                Hover a region to see its progress; click to travel there. Scroll or pinch to zoom, drag to pan.
+              </span>
             )}
           </div>
           <p className="muted map-key">
             <span className="key-sw parchment" /> unexplored <span className="key-sw explored" /> explored{' '}
-            <span className="key-sw gold" /> learned · white squares are discovered words, gold ones learned. Thick borders
-            separate HSK levels; the center is HSK 1.
+            <span className="key-sw gold" /> learned · ★ outlined region is the one you are pointing at (or in) · white
+            squares are discovered words, gold ones learned. Thick borders separate HSK levels; the center is HSK 1. Scroll,
+            pinch, or press +/− to zoom; drag to pan; 0 to fit.
           </p>
         </div>
         <div className="region-list">

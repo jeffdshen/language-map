@@ -1990,6 +1990,46 @@ table.sources td {
   max-height: 46vh;
 }
 
+.overview-zoom {
+  position: relative;
+}
+
+.overview-canvas.zoomable {
+  touch-action: none;
+  user-select: none;
+}
+
+.overview-canvas.dragging {
+  cursor: grabbing;
+}
+
+.overview-zoom-btns {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.overview-zoom-btns button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  background: rgba(255, 252, 244, 0.92);
+  color: #2b2418;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.overview-zoom-btns button:hover {
+  background: #fff;
+}
+
 .map-info {
   margin-top: 8px;
   min-height: 1.5em;

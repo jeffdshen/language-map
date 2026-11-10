@@ -35,7 +35,8 @@ First pack: **Mandarin Chinese → English, HSK 3.0 (official 2025 exam syllabus
     `+`/`−`.
   - The minimap (bottom right) shows the town you're in and its progress.
   - Press `M` or click the minimap for the **world map**: every region with learned/explored
-    progress, sorted by level.
+    progress, sorted by level. The region you point at (or stand in) gets a bold outline, a ★ on
+    its hall and its name; scroll, pinch or `+`/`−` to zoom (`0` fits it again), drag to pan.
 - **Landmarks** come from the ground they stand on: cottages, shops, barns and towers in towns;
   trees, pines, boulders, mountains, dunes, mesas, crystals, clouds and lily pads in the wilds.
   The word is written on the landmark with its pinyin underneath, for every word in a town
