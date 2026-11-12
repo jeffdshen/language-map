@@ -73,9 +73,10 @@ function MapModalInner() {
             )}
           </div>
           <p className="muted map-key">
-            <span className="key-sw parchment" /> unexplored <span className="key-sw explored" /> explored{' '}
-            <span className="key-sw gold" /> learned · ★ outlined region is the one you are pointing at (or in) · white
-            squares are discovered words, gold ones learned. Thick borders separate HSK levels; the center is HSK 1. Scroll,
+            <span className="key-sw parchment" /> unexplored <span className="key-sw explored" /> explored, turning{' '}
+            <span className="key-sw gold" /> gold as you learn its words <span className="key-sw done" /> completed: every
+            word learned (bold border) · outlined in white: the region you are pointing at (or in) · white squares are
+            discovered words, gold ones learned. Thick borders separate HSK levels; the center is HSK 1. Scroll,
             pinch, or press +/− to zoom; drag to pan; 0 to fit.
           </p>
         </div>
@@ -137,14 +138,14 @@ export function RegionRow({
     <li>
       <button
         type="button"
-        className={`region-row ${here ? 'here' : ''}`}
+        className={`region-row${here ? ' here' : ''}${total > 0 && learned >= total ? ' done' : ''}`}
         style={{ ['--region' as string]: r.color }}
         onMouseEnter={onHover ? () => onHover(true) : undefined}
         onMouseLeave={onHover ? () => onHover(false) : undefined}
         onFocus={onHover ? () => onHover(true) : undefined}
         onBlur={onHover ? () => onHover(false) : undefined}
         onClick={onClick}
-        title={`${r.en} — ${learned}/${total} learned, ${seen} found`}
+        title={`${r.en} — ${learned}/${total} learned${total > 0 && learned >= total ? ' (completed)' : ''}, ${seen} found`}
       >
         <span className="swatch" />
         <span className="name">

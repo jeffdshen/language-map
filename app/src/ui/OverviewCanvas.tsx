@@ -4,7 +4,9 @@ import {
   fillRegion,
   landBounds,
   MAX_OVERVIEW_ZOOM,
-  regionOutline,
+  OVERVIEW_COLORS,
+  regionDone,
+  traceOutline,
   viewCellAt,
   viewScale,
   zoomViewAt,
@@ -26,19 +28,10 @@ const ZOOM_STEP = 1.6
 const DRAG_SLOP = 6
 const LABEL_FONT = '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif'
 
-function star(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
-  g.beginPath()
-  for (let i = 0; i < 10; i++) {
-    const a = -Math.PI / 2 + (i * Math.PI) / 5
-    const d = i % 2 ? r * 0.45 : r
-    g.lineTo(x + Math.cos(a) * d, y + Math.sin(a) * d)
-  }
-  g.closePath()
-}
-
 /**
- * The simplified world map scaled to fit its container. Reports the hovered/clicked cell; can highlight a region,
- * show "you are here", and draw word markers. `crop` shows only part of the world (in cells). `zoomable` adds
+ * The simplified world map scaled to fit its container. Completed regions (every word learned) are yellow with a
+ * bold border and label. Reports the hovered/clicked cell; can highlight a region, show "you are here", and draw
+ * word markers. `crop` shows only part of the world (in cells). `zoomable` adds
  * wheel/pinch/keyboard zoom, drag to pan, and zoom buttons.
  */
 export function OverviewCanvas({
@@ -102,41 +95,47 @@ export function OverviewCanvas({
       const px = (x: number) => (x - b.x0 + 0.5) * s + v.ox
       const py = (y: number) => (y - b.y0 + 0.5) * s + v.oy
       const hl = highlight >= 0 ? pack.world.regions[highlight] : undefined
-      if (hl) {
+      const done = pack.world.regions.filter((r) => regionDone(r, view))
+      if (done.length || hl) {
         g.setTransform(dpr * s, 0, 0, dpr * s, dpr * v.ox, dpr * v.oy)
-        fillRegion(g, pack.world, hl.id, b, 'rgba(255, 255, 255, 0.3)')
-        const seg = regionOutline(pack.world, hl.id)
-        g.beginPath()
-        for (let n = 0; n < seg.length; n += 4) {
-          g.moveTo(seg[n] - b.x0, seg[n + 1] - b.y0)
-          g.lineTo(seg[n + 2] - b.x0, seg[n + 3] - b.y0)
-        }
         g.lineCap = 'square'
         g.lineJoin = 'miter'
-        g.lineWidth = 5 / s
-        g.strokeStyle = 'rgba(24, 18, 10, 0.9)'
-        g.stroke()
-        g.lineWidth = 2.25 / s
-        g.strokeStyle = '#ffffff'
-        g.stroke()
+        if (done.length) {
+          g.beginPath()
+          for (const r of done) traceOutline(g, pack.world, r.id, b.x0, b.y0)
+          g.lineWidth = 3 / s
+          g.strokeStyle = OVERVIEW_COLORS.doneBorder
+          g.stroke()
+        }
+        if (hl) {
+          fillRegion(g, pack.world, hl.id, b, 'rgba(255, 255, 255, 0.3)')
+          g.beginPath()
+          traceOutline(g, pack.world, hl.id, b.x0, b.y0)
+          g.lineWidth = 3 / s
+          g.strokeStyle = 'rgba(24, 18, 10, 0.85)'
+          g.stroke()
+          g.lineWidth = 1.5 / s
+          g.strokeStyle = '#ffffff'
+          g.stroke()
+        }
         g.setTransform(dpr, 0, 0, dpr, 0, 0)
       }
       g.textAlign = 'center'
       g.textBaseline = 'middle'
       g.lineJoin = 'round'
+      const font = Math.max(9, Math.min(13, s * 4.2))
       if (labels && s >= 1.6) {
-        const font = Math.max(9, Math.min(13, s * 4.2))
-        g.font = `700 ${font}px ${LABEL_FONT}`
         for (const r of pack.world.regions) {
           // Only label regions big enough to hold their name; the highlighted one gets its own label below.
           if (r === hl || r.cells * s * s < font * font * r.zh.length * 3.2) continue
           const x = px(r.x)
           const y = py(r.y)
           if (x < -40 || y < -20 || x > W + 40 || y > H + 20) continue
-          const seen = view.regionSeen[r.id] > 0
+          const complete = regionDone(r, view)
+          g.font = `${complete ? 900 : 700} ${font}px ${LABEL_FONT}`
           g.lineWidth = 3
           g.strokeStyle = 'rgba(255, 252, 244, 0.8)'
-          g.fillStyle = seen ? 'rgba(40, 28, 12, 0.92)' : 'rgba(90, 80, 64, 0.6)'
+          g.fillStyle = complete ? '#5a3a00' : view.regionSeen[r.id] > 0 ? 'rgba(40, 28, 12, 0.92)' : 'rgba(90, 80, 64, 0.6)'
           g.strokeText(r.zh, x, y)
           g.fillText(r.zh, x, y)
         }
@@ -158,28 +157,17 @@ export function OverviewCanvas({
       g.lineWidth = 1.5
       g.strokeStyle = '#2b4c6f'
       g.stroke()
-      if (hl) {
-        // A star on the region's hall plus its name, so even tiny regions stand out.
+      if (hl && labels) {
+        // The highlighted region's name at its hall, whatever its size.
         const x = px(hl.x)
         const y = py(hl.y)
-        const r = 8
-        star(g, x, y, r)
+        g.font = `700 ${Math.max(12, font)}px ${LABEL_FONT}`
         g.lineJoin = 'round'
-        g.lineWidth = 3
-        g.strokeStyle = 'rgba(24, 18, 10, 0.9)'
-        g.stroke()
-        g.fillStyle = '#ffd23f'
-        g.fill()
-        if (labels) {
-          const font = 15
-          g.font = `800 ${font}px ${LABEL_FONT}`
-          const ly = y + r + font / 2 + 3
-          g.lineWidth = 4.5
-          g.strokeStyle = 'rgba(24, 18, 10, 0.9)'
-          g.strokeText(hl.zh, x, ly)
-          g.fillStyle = '#ffffff'
-          g.fillText(hl.zh, x, ly)
-        }
+        g.lineWidth = 3.5
+        g.strokeStyle = 'rgba(24, 18, 10, 0.85)'
+        g.strokeText(hl.zh, x, y)
+        g.fillStyle = '#ffffff'
+        g.fillText(hl.zh, x, y)
       }
       if (here) {
         const x = px(here[0])

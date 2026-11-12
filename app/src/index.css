@@ -2062,6 +2062,11 @@ table.sources td {
   background: var(--gold);
 }
 
+.key-sw.done {
+  background: #ffd64a;
+  border: 2px solid #6e4800;
+}
+
 .region-list {
   max-height: calc(100vh - 150px);
   overflow-y: auto;
@@ -2109,6 +2114,22 @@ ul.region-list {
 .region-row.here {
   background: color-mix(in srgb, var(--region) 16%, white);
   border-color: color-mix(in srgb, var(--region) 60%, white);
+}
+
+.region-row.done {
+  background: #fff3c2;
+  border-color: var(--gold);
+}
+
+.region-row.done:hover,
+.region-row.done:focus-visible {
+  background: #ffe68a;
+}
+
+.region-row.done .zh,
+.region-row.done .count {
+  font-weight: 900;
+  color: var(--gold-ink);
 }
 
 .region-row .swatch {

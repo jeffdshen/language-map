@@ -2,7 +2,7 @@ import { useEffect, useReducer, useRef, useState } from 'react'
 import type { QuestMode } from '../logic/progress'
 import type { FogMode, FogScope, MapPinyin } from '../logic/save'
 import { useStore } from '../store'
-import { onVoicesChanged, speak, voicesFor } from '../tts'
+import { autoVoice, onVoicesChanged, speak, voiceFailed, voicesFor } from '../tts'
 import { Modal } from './common'
 
 /** Number input that keeps a local draft and only commits on blur or Enter, so typing isn't clamped mid-edit. */
@@ -42,17 +42,20 @@ function VoiceField({ lang, value, onChange }: { lang: string; value: string; on
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   useEffect(() => onVoicesChanged(rerender), [])
   const voices = voicesFor(lang)
+  const auto = autoVoice(lang)
   const missing = value !== '' && !voices.some((v) => v.voiceURI === value)
   return (
     <label className="field">
       <span>Voice (natural/online voices sound best; on Windows, Edge has the most natural Chinese voices)</span>
       <select value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">{voices.length ? `Auto — ${voices[0].name}` : 'Auto — no Chinese voice found on this device'}</option>
+        <option value="">
+          {auto ? `Auto — ${auto.name}` : voices.length ? 'Auto — browser default' : 'Auto — no Chinese voice found on this device'}
+        </option>
         {missing ? <option value={value}>Saved voice (not on this device — using Auto)</option> : null}
         {voices.map((v) => (
           <option key={v.voiceURI} value={v.voiceURI}>
             {v.name} ({v.lang}
-            {v.localService ? '' : ', online'})
+            {v.localService ? '' : ', online'}){voiceFailed(v.voiceURI) ? ' — not working here, skipped' : ''}
           </option>
         ))}
       </select>

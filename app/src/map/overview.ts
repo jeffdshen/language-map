@@ -1,5 +1,5 @@
 import type { Pack } from '../data/pack'
-import type { World } from '../data/types'
+import type { Region, World } from '../data/types'
 import { Vis, type MapView } from '../logic/explore'
 import { GOLD, hexToRgb, mix, rgb, shade, type RGB } from './draw'
 
@@ -45,17 +45,26 @@ const SEA: RGB = [46, 84, 124]
 const LAKE: RGB = [92, 146, 190]
 const MUTED: RGB = [196, 194, 188]
 
-export const OVERVIEW_COLORS = { sea: rgb(SEA), learned: rgb(GOLD) }
+/** A completed region (every word learned): bright yellow, with a bold border on the maps. */
+const DONE: RGB = [255, 214, 74]
+
+export const OVERVIEW_COLORS = { sea: rgb(SEA), learned: rgb(GOLD), done: rgb(DONE), doneBorder: 'rgba(110, 72, 0, 0.95)' }
+
+/** Every word in the region is learned. */
+export function regionDone(r: Region, view: MapView): boolean {
+  return r.count > 0 && view.regionLearned[r.id] >= r.count
+}
 
 /**
  * Region color on the overview: parchment until you have explored some of it, then its own color, turning gold
- * as its words are learned.
+ * as its words are learned, and bright yellow once all of them are.
  */
 export function regionFill(color: string, count: number, seen: number, learned: number): RGB {
+  if (count && learned >= count) return DONE
   const base = hexToRgb(color)
   const s = count ? Math.min(1, (seen / count) * 6) : 0
   const l = count ? learned / count : 0
-  return mix(mix(PARCHMENT, base, 0.32 + 0.68 * s), GOLD, l * 0.85)
+  return mix(mix(PARCHMENT, base, 0.32 + 0.68 * s), GOLD, l * 0.7)
 }
 
 export interface OverviewOptions {
@@ -210,6 +219,15 @@ export function regionOutline(world: World, region: number): Float32Array {
   const arr = Float32Array.from(out)
   byRegion.set(region, arr)
   return arr
+}
+
+/** Add a region's border to the current path, in cells relative to (x0, y0) (cell (x, y) spans x..x+1). */
+export function traceOutline(ctx: CanvasRenderingContext2D, world: World, region: number, x0: number, y0: number): void {
+  const seg = regionOutline(world, region)
+  for (let n = 0; n < seg.length; n += 4) {
+    ctx.moveTo(seg[n] - x0, seg[n + 1] - y0)
+    ctx.lineTo(seg[n + 2] - x0, seg[n + 3] - y0)
+  }
 }
 
 /** Zoom and pan of an overview in a W × H box: cell x is drawn at `(x - b.x0) * scale + ox` (same for y). */

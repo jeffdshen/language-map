@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useStore } from '../store'
 import { levelLabel } from '../ui/text'
 import { onCamera } from './camera'
-import { landBounds, OVERVIEW_COLORS, renderOverview } from './overview'
+import { landBounds, OVERVIEW_COLORS, regionDone, renderOverview, traceOutline } from './overview'
 import type { CameraInfo } from './renderer'
 
 /** Overview pixels per cell (also the minimap's on-screen scale, in CSS px). */
@@ -43,6 +43,18 @@ export function Minimap() {
       const oy = Math.round(H / 2 - (cam.y - b.y0 + 0.5) * K)
       g.imageSmoothingEnabled = false
       g.drawImage(image, ox, oy)
+      // Completed regions: a bold border around their yellow.
+      const done = pack.world.regions.filter((r) => regionDone(r, view))
+      if (done.length) {
+        g.setTransform(dpr * K, 0, 0, dpr * K, dpr * ox, dpr * oy)
+        g.beginPath()
+        for (const r of done) traceOutline(g, pack.world, r.id, b.x0, b.y0)
+        g.lineCap = 'square'
+        g.lineWidth = 2 / K
+        g.strokeStyle = OVERVIEW_COLORS.doneBorder
+        g.stroke()
+        g.setTransform(dpr, 0, 0, dpr, 0, 0)
+      }
       const [sx, sy] = pack.world.spawn
       g.fillStyle = '#ffffff'
       g.strokeStyle = '#2b4c6f'
@@ -87,7 +99,7 @@ export function Minimap() {
       off()
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [pack, image])
+  }, [pack, view, image])
 
   const r = here >= 0 ? pack.world.regions[here] : null
   const learned = r ? view.regionLearned[r.id] : 0
