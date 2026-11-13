@@ -12,5 +12,13 @@
     "name": "SenseVoice Small (int8 ONNX export by sherpa-onnx); only for `langmap audio-check`",
     "homepage": "https://github.com/FunAudioLLM/SenseVoice",
     "license": "FunASR model license (used for checks, not redistributed)"
+  },
+  "clips": {
+    "url": "https://github.com/jeffdshen/language-map/releases/download/audio-6f537c53e615/zh-en-audio-6f537c53e615.tar",
+    "sha256": "ce10facf674f515a48cb68f00355edd6aa962c22489f8a3c63c00fe335ea92be",
+    "version": "6f537c53e615",
+    "name": "Speech clips for the zh-en pack (langmap audio)",
+    "homepage": "https://github.com/jeffdshen/language-map/releases/tag/audio-6f537c53e615",
+    "license": "CC BY 2.0 FR (sentences from Tatoeba); made with Kokoro-82M (Apache-2.0)"
   }
 }
