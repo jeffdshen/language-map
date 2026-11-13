@@ -105,6 +105,9 @@ the browser. GitHub Pages deploys it from Actions on every push to `main`.
 | Word frequency | wordfreq | CC BY-SA 4.0 (data) |
 | Audio | Browser Web Speech API (zh-CN); speech hints for misread characters from pypinyin + wordfreq | n/a |
 
+Audio is being moved from browser speech to pre-generated clips; see [audio.md](audio.md) for
+why (browser speech is silent on some machines) and the open decisions.
+
 All inputs are pinned with sha256 checksums in `pipeline/sources.lock.json`. The code is MIT.
 The generated pack is CC BY-SA 4.0 (see `ATTRIBUTION.md`).
 
