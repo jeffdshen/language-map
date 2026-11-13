@@ -1,0 +1,110 @@
+name: Speech clips
+
+# Says every word and sentence of the pack with Kokoro (docs/audio.md), publishes the clips as a
+# release asset, pins it in pipeline/audio.lock.json and redeploys the site, which downloads it.
+# Run it (Actions → Speech clips → Run workflow) after changing the pack, the voice or phonemes.py.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audio
+  cancel-in-progress: false
+
+env:
+  SHARDS: 20
+  PROCS: 4 # GitHub's ubuntu-latest runners have 4 cores for public repositories
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync --locked --group audio
+      - name: Fetch the model (once, before the processes below share it)
+        run: uv run --group audio python -c 'from langmap.audio import model_dir; print(model_dir())'
+      # One single-threaded process per core: the model is small, so this beats intra-op threads.
+      - name: Say this shard's clips
+        run: |
+          pids=()
+          for j in $(seq 0 $((PROCS - 1))); do
+            uv run --group audio langmap audio --threads 1 \
+              --shard $(( ${{ matrix.shard }} * PROCS + j ))/$(( SHARDS * PROCS )) &
+            pids+=($!)
+          done
+          for p in "${pids[@]}"; do wait "$p"; done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clips-${{ matrix.shard }}
+          path: data/zh-en/audio
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: generate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    defaults:
+      run:
+        working-directory: pipeline
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync --locked
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: clips-*
+          merge-multiple: true
+          path: data/zh-en/audio
+      - name: Pack and publish
+        run: |
+          version=$(uv run python -c 'from langmap.audio import clips_version, pack_clips; from langmap.paths import DATA_DIR; print(clips_version(pack_clips(DATA_DIR / "zh-en")))')
+          tag="audio-$version"
+          asset="$RUNNER_TEMP/zh-en-audio-$version.tar"
+          uv run langmap audio-pack --tar "$asset"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$asset" --clobber
+          else
+            gh release create "$tag" "$asset" --target "$GITHUB_SHA" --title "Speech clips $version" \
+              --notes "Speech clips for the zh-en pack, made by the Speech clips workflow from $GITHUB_SHA. See docs/audio.md."
+          fi
+          jq --arg url "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$(basename "$asset")" \
+             --arg sha "$(sha256sum "$asset" | cut -d' ' -f1)" \
+             --arg home "https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag" \
+             --arg version "$version" \
+             '.clips = {url: $url, sha256: $sha, version: $version,
+                        name: "Speech clips for the zh-en pack (langmap audio)", homepage: $home,
+                        license: "CC BY 2.0 FR (sentences from Tatoeba); made with Kokoro-82M (Apache-2.0)"}' \
+             audio.lock.json > "$RUNNER_TEMP/lock.json"
+          mv "$RUNNER_TEMP/lock.json" audio.lock.json
+          echo "version=$version" >> "$GITHUB_ENV"
+      - name: Pin and redeploy
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add audio.lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Pin speech clips $version"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+          # Pushes made with GITHUB_TOKEN don't start workflows; a dispatch does.
+          gh workflow run pages.yml --ref main

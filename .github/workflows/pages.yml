@@ -25,6 +25,17 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: app/package-lock.json
+      - name: Add the speech clips pinned in pipeline/audio.lock.json (docs/audio.md)
+        working-directory: .
+        run: |
+          url=$(jq -r '.clips.url // empty' pipeline/audio.lock.json)
+          if [ -z "$url" ]; then
+            echo "::warning::No speech clips published yet; the site will use browser speech."
+            exit 0
+          fi
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/clips.tar" "$url"
+          echo "$(jq -r .clips.sha256 pipeline/audio.lock.json)  $RUNNER_TEMP/clips.tar" | sha256sum -c -
+          tar -xf "$RUNNER_TEMP/clips.tar" -C data/zh-en
       - run: npm ci
       - run: npm run build
       - uses: actions/upload-pages-artifact@v5

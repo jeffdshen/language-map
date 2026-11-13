@@ -35,6 +35,7 @@ VOICE = "zf_001"
 SPEED = 0.85
 SAMPLE_RATE = 24000
 BITRATE = 32
+LOUDNESS = 0.12  # RMS of speech, about -18 dBFS: as loud as typical system voices
 # Bump when phonemes.py changes how things are said, so clips are regenerated and re-cached.
 PHONEMES_VERSION = 1
 INDEX_SCHEMA = 1
@@ -195,16 +196,28 @@ def trim(audio: np.ndarray, sr: int = SAMPLE_RATE, pad: float = 0.06) -> np.ndar
     return audio
 
 
+def normalize(audio: np.ndarray, sr: int = SAMPLE_RATE, rms: float = LOUDNESS) -> np.ndarray:
+    """Scale so the speech (10 ms frames within 30 dB of the loudest) has RMS ``rms``, with peaks
+    kept under 0.95. Kokoro's output is quiet (peaks around 0.25) and varies from clip to clip."""
+    win = int(sr * 0.01)
+    if len(audio) < win:
+        return audio
+    frames = audio[: len(audio) // win * win].reshape(-1, win)
+    power = (frames**2).mean(axis=1)
+    speech = power[power > power.max() * 1e-3]
+    gain = rms / max(float(np.sqrt(speech.mean())), 1e-6)
+    gain = min(gain, 0.95 / max(float(np.abs(audio).max()), 1e-6))
+    return (audio * gain).astype(np.float32)
+
+
 def encode_mp3(audio: np.ndarray, sr: int = SAMPLE_RATE, kbps: int = BITRATE) -> bytes:
     import lameenc
 
-    peak = float(np.abs(audio).max()) if audio.size else 0.0
-    if peak > 0.98:
-        audio = audio * (0.98 / peak)
-    pcm = (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes()
+    pcm = (np.clip(normalize(audio, sr), -1, 1) * 32767).astype("<i2").tobytes()
     enc = lameenc.Encoder()
     enc.set_bit_rate(kbps)
     enc.set_in_sample_rate(sr)
+    enc.set_out_sample_rate(sr)
     enc.set_channels(1)
     enc.set_quality(2)
     return bytes(enc.encode(pcm) + enc.flush())
@@ -216,6 +229,7 @@ def settings() -> dict:
         "voice": VOICE,
         "speed": SPEED,
         "bitrate": BITRATE,
+        "loudness": LOUDNESS,
         "phonemes": PHONEMES_VERSION,
     }
 

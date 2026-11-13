@@ -74,11 +74,16 @@ audio path as any video or music on the web, and behave the same on every device
 
 - **Hosting the audio (~200–250 MB).** Committing it to `main` would bloat every clone, and
   each regeneration would add another copy to history. Options: (a) GitHub release assets,
-  pinned by sha256 in the repo and downloaded by the Pages deploy (current choice: no repo
+  pinned by sha256 in the repo and downloaded by the Pages deploy (**implemented**: no repo
   bloat, reproducible); (b) generate in the deploy workflow with a cache (slow cold builds);
   (c) Git LFS (bandwidth quota); (d) a separate audio repo/site.
-- **Voice.** One voice to keep size down; picked by an automatic intelligibility check (ASR
-  round-trip), not by ear. A listen-through by a person is still worth doing.
+- **Voice.** One voice to keep size down; picked by measurements (below), not by ear. A
+  listen-through by a person is still worth doing; changing it is one constant (`VOICE` in
+  `audio.py`) and a workflow run.
+- **Regenerating after pack changes.** Clips are keyed by text, so after the pack changes, new
+  sentences have no clip (they fall back to browser speech) until the Speech clips workflow is
+  run again. It regenerates everything (free on public repos, ~20 parallel jobs); reusing the
+  previous release's clips would be faster but risks keeping a clip whose reading changed.
 - **Browser speech as an option.** Kept as the fallback and as a Settings choice for people who
   prefer their own system voices.
 
@@ -107,6 +112,25 @@ Commands (`cd pipeline`; the `audio` dependency group holds onnxruntime and lame
   writes `audio/index.json` (what the app loads) and a deterministic tarball, printing sha256.
 - `uv run --group audio-check langmap audio-check [--voice zm_010] [--sample 40]`: the numbers
   in the table below, so a voice or phonemizer change can be compared without listening.
+
+### Publishing (`.github/workflows/audio.yml`, run by hand)
+
+1. 20 jobs, each running 4 single-threaded processes (`--shard k/80`), say their clips and
+   upload them as artifacts.
+2. A publish job merges them, runs `audio-pack --tar`, creates the release `audio-<version>`
+   (version = hash of settings + every clip's key and phonemes), writes its URL and sha256 as
+   `clips` in `pipeline/audio.lock.json`, commits that to main and dispatches `pages.yml`
+   (pushes made with `GITHUB_TOKEN` don't trigger workflows).
+3. `pages.yml` downloads the tarball, checks its sha256 and unpacks it into
+   `data/zh-en/audio/` before `npm run build` (Vite copies `data/` into the site). Without a
+   `clips` entry it warns and deploys without clips: everything uses browser speech.
+
+`data/*/audio/` is gitignored. To try clips locally: `langmap audio --limit 50`, then write an
+`audio/index.json` by hand (`audio-pack` refuses while clips are missing), `npm run build`.
+
+Encoding: Kokoro outputs 24 kHz float; each clip is trimmed to 60 ms of silence around the
+speech, normalised to a speech RMS of 0.12 (about −18 dBFS; Kokoro's raw output peaks near
+0.25, noticeably quieter than system voices), and encoded by LAME at 32 kbps CBR, 24 kHz mono.
 
 ### Why phonemes from the pack's pinyin
 

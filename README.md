@@ -97,11 +97,13 @@ Other features:
   that close with ×, a tap on the map above them, a swipe down on their grip, or the phone's
   Back button.
 
-Audio uses the browser's built-in speech synthesis (`zh-CN`); if no Chinese voice is installed,
-the app tells you to read the pinyin aloud instead. It picks the most natural mainland Mandarin
-voice it finds (Edge's online "Natural" voices sound best on Windows), and **Settings → Voice**
-lets you choose another. A word whose characters a voice would misread on their own (还 huán,
-地 de, 长 zhǎng) is spoken from characters that only have that sound.
+Audio is recorded ahead of time: every word reading and example sentence is an MP3 clip said by
+an open-weights voice (Kokoro-82M) from the pack's own pinyin, with tone sandhi, so it sounds the
+same on every device and says exactly the pinyin shown. The browser's speech synthesis
+(`zh-CN`) is the fallback for anything without a clip, and **Settings → Audio** can switch to it
+for people who prefer their own system voices. Settings shows what the last 🔊 actually did.
+[docs/audio.md](docs/audio.md) explains why (browser speech was silent on some machines) and how
+the clips are made and published.
 
 Progress is stored locally in your browser (IndexedDB, falling back to localStorage). Nothing is
 sent anywhere, so use **Settings → Export progress** to back up or move to another device. Tabs

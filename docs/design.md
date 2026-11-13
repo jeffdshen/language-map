@@ -103,12 +103,14 @@ the browser. GitHub Pages deploys it from Actions on every push to `main`.
 | Example sentences (+ English) | Tatoeba cmn↔eng (pinned npm snapshot) | CC BY 2.0 FR |
 | Semantic vectors (build time only) | ConceptNet Numberbatch 17.06 | CC BY-SA 4.0 |
 | Word frequency | wordfreq | CC BY-SA 4.0 (data) |
-| Audio | Browser Web Speech API (zh-CN); speech hints for misread characters from pypinyin + wordfreq | n/a |
+| Audio | MP3 clips said by Kokoro-82M v1.1-zh from the pack's pinyin; browser Web Speech API (zh-CN) as the fallback, with speech hints for misread characters from pypinyin + wordfreq | Apache-2.0 (model) |
 
-Audio is being moved from browser speech to pre-generated clips; see [audio.md](audio.md) for
-why (browser speech is silent on some machines) and the open decisions.
+Audio is pre-generated clips rather than browser speech; see [audio.md](audio.md) for why
+(browser speech is silent on some machines), how clips are made and published, and the open
+decisions.
 
-All inputs are pinned with sha256 checksums in `pipeline/sources.lock.json`. The code is MIT.
+All inputs are pinned with sha256 checksums in `pipeline/sources.lock.json` (speech models and
+the published clips in `pipeline/audio.lock.json`). The code is MIT.
 The generated pack is CC BY-SA 4.0 (see `ATTRIBUTION.md`).
 
 ### Pack format (schema 4)

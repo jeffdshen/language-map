@@ -15,11 +15,16 @@ CC BY 2.0 FR.
 | [Tatoeba](https://tatoeba.org/) via the npm package `tatoeba-sentence-pairs-in-mandarin-chinese-english` | example sentences (Chinese ↔ English) | CC BY 2.0 FR |
 | [ConceptNet Numberbatch 17.06](https://github.com/commonsense/conceptnet-numberbatch) | semantic embeddings for topics, neighbors and world layout (vectors are not redistributed) | CC BY-SA 4.0 |
 | [wordfreq](https://github.com/rspeer/wordfreq) | word frequency (placement within a level, discovery order) | Apache-2.0 code; data CC BY-SA 4.0 |
+| [Kokoro-82M v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) (int8 ONNX export by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)) | the voice of the speech clips (published as a release asset, not in the repo) | Apache-2.0 |
 | [jieba](https://github.com/fxsjy/jieba), [pypinyin](https://github.com/mozillazg/python-pinyin), [OpenCC](https://github.com/BYVoid/OpenCC) | segmentation, reading disambiguation, script filtering | MIT / MIT / Apache-2.0 |
 
 Tatoeba sentences keep their original ids (`id`, `en_id` in `sentences.json`);
 each sentence can be viewed at `https://tatoeba.org/sentences/show/<id>`, which
 credits its contributor.
 
+The speech clips say the pack's words and sentences, so sentence clips are
+derived from Tatoeba (CC BY 2.0 FR) like the sentences themselves.
+
 Exact versions and checksums of every input are pinned in
-[`pipeline/sources.lock.json`](pipeline/sources.lock.json).
+[`pipeline/sources.lock.json`](pipeline/sources.lock.json) (speech models and
+the published clips in [`pipeline/audio.lock.json`](pipeline/audio.lock.json)).
