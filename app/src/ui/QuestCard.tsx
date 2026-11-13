@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import { loadedSentences, loadSentences } from '../data/pack'
 import type { Sentence, SentenceData } from '../data/types'
 import { shortGloss } from '../logic/boss'
 import { Vis } from '../logic/explore'
 import { currentStage, KIND_STAGE, STAGES, stageDone, stageNeeds, type SentenceKind } from '../logic/progress'
 import { isCollected, useStore, type Reward } from '../store'
-import { hasVoice, onVoicesChanged, speak, stopSpeaking, ttsSupported } from '../tts'
+import { canSpeak, onAudioChange, speak, stopSpeaking } from '../audio'
 import { SentenceView, SpeakButton } from './common'
 import { levelLabel, sentencePinyin, sentenceText } from './text'
 
@@ -31,10 +31,11 @@ function merge(a: Reward, b: Reward): Reward {
   }
 }
 
+/** Whether there is any way to say things (recordings or a browser voice); updates as clips and voices load. */
 function useVoice(lang: string): boolean {
-  const [ok, setOk] = useState(() => hasVoice(lang))
-  useEffect(() => onVoicesChanged(() => setOk(hasVoice(lang))), [lang])
-  return ok
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => onAudioChange(rerender), [])
+  return canSpeak(lang)
 }
 
 /** Sentences for word `i`, rotated by its points so far, uncollected ones first. */
@@ -238,7 +239,7 @@ export function QuestCard({
   const cur = currentStage(wp, needs, count)
   const stageInfo = cur >= 0 ? STAGES[cur] : null
   const have = cur >= 0 ? Math.min(wp?.stages[cur]?.n ?? 0, needs[cur]) : 0
-  const noVoice = !ttsSupported() || !voice
+  const noVoice = !voice
   const isNew = vis < Vis.Revealed
 
   return (

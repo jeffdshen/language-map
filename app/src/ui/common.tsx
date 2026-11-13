@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 import type { Sentence } from '../data/types'
 import { Vis } from '../logic/explore'
 import { useStore } from '../store'
-import { speak } from '../tts'
+import { speak } from '../audio'
 import { levelLabel, tokenPinyin } from './text'
 import { useSwipeDismiss } from './useSwipeDismiss'
 

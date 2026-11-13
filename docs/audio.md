@@ -87,3 +87,28 @@ audio path as any video or music on the web, and behave the same on every device
 
 - 2026-11-13: Investigation above; decided on pre-generated audio. AGENTS.md asks agents to keep
   these notes current.
+- 2026-11-13: App side landed: `app/src/audio.ts` (clip player, routing, fallback), Settings →
+  Audio (recorded voice / browser speech) with a status line under 🔊 Test, all call sites
+  switched from `tts.ts` to `audio.ts`. Until clips are deployed, everything still falls back to
+  browser speech (`no-pack`).
+
+## App side (`app/src/audio.ts`)
+
+- `loadClips(packBase)` fetches `<pack>/audio/index.json` (`{schema: 1, version, engine, voice,
+  speed, count}`); without it every request goes to browser speech.
+- `clipName(text)`: 64-bit FNV-1a of the NFC UTF-8 text, 16 hex digits. Clip URL:
+  `<pack>/audio/<first 2 hex>/<name>.mp3?v=<version>`. The same function is in the pipeline;
+  both test suites share vectors, so if one changes the other's tests fail.
+- One shared `HTMLAudioElement`. `playbackRate = rate / index.speed` (the rate setting is
+  relative to the voice's normal pace; clips are generated at `speed`). Setting `src` resets
+  `playbackRate`, so `defaultPlaybackRate` is set too.
+- Fallback to `tts.speak` when the clip 404s (`MediaError` code 4), fails, or there is no pack.
+  `NotAllowedError` (autoplay without a gesture) is reported as `blocked`, not sent to browser
+  speech, which would be blocked too.
+- Safari only lets a media element play outside a gesture once it has played inside one, so the
+  first `pointerdown`/`keydown` plays a tiny silent WAV on the shared element (sentences
+  autoplay after an async load, outside the gesture).
+- `Settings.audioSource` (`'recorded'` default, `'browser'`). Existing saves get `'recorded'`,
+  which is the point: whatever browser voice they had saved is no longer in the way.
+- Settings shows what the last request did (played the recording / fell back and why / blocked),
+  since "nothing happened" was impossible to diagnose before.

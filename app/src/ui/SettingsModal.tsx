@@ -1,8 +1,9 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
 import type { QuestMode } from '../logic/progress'
-import type { FogMode, FogScope, MapPinyin } from '../logic/save'
+import { audioStatus, clipIndex, onAudioChange, speak, type AudioStatus } from '../audio'
+import type { AudioSource, FogMode, FogScope, MapPinyin } from '../logic/save'
 import { useStore } from '../store'
-import { autoVoice, onVoicesChanged, speak, voiceFailed, voicesFor } from '../tts'
+import { autoVoice, onVoicesChanged, voiceFailed, voicesFor } from '../tts'
 import { Modal } from './common'
 
 /** Number input that keeps a local draft and only commits on blur or Enter, so typing isn't clamped mid-edit. */
@@ -37,6 +38,49 @@ function NumberField({
   )
 }
 
+function useAudioState() {
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => onAudioChange(rerender), [])
+}
+
+const STATUS: Record<string, string> = {
+  loading: 'Loading the recording…',
+  playing: '▶ Playing the recording.',
+  ended: '✓ Played the recording. Heard nothing? Check the volume and the output device.',
+  blocked: 'The browser wants a tap or key press before it plays sound. Press Test again.',
+  chosen: 'Played with browser speech. If you heard nothing, choose the recorded voice above.',
+  'no-clip': 'This text has no recording yet, so browser speech said it.',
+  'clip-failed': 'The recording failed to load, so browser speech said it.',
+  'no-pack': 'Recordings are not available in this build, so browser speech said it.',
+}
+
+function statusText(s: AudioStatus): string {
+  return s.kind === 'idle' ? '' : (STATUS[s.kind === 'browser' ? s.why : s.kind] ?? '')
+}
+
+/** Recorded clips (default) or the browser's own speech. */
+function AudioField({ value, onChange }: { value: AudioSource; onChange: (s: AudioSource) => void }) {
+  useAudioState()
+  const index = clipIndex()
+  return (
+    <label className="field">
+      <span>Audio</span>
+      <select value={value} onChange={(e) => onChange(e.target.value as AudioSource)}>
+        <option value="recorded">
+          {index ? 'Recorded voice — sounds the same on every device (default)' : 'Recorded voice — not available here, using browser speech'}
+        </option>
+        <option value="browser">Browser speech — your device's own voices</option>
+      </select>
+    </label>
+  )
+}
+
+function AudioStatusLine() {
+  useAudioState()
+  const text = statusText(audioStatus())
+  return text ? <p className="hint">{text}</p> : null
+}
+
 /** Text-to-speech voice for the pack's language, best first; Auto follows the ranking as voices load. */
 function VoiceField({ lang, value, onChange }: { lang: string; value: string; onChange: (uri: string) => void }) {
   const [, rerender] = useReducer((n: number) => n + 1, 0)
@@ -46,7 +90,7 @@ function VoiceField({ lang, value, onChange }: { lang: string; value: string; on
   const missing = value !== '' && !voices.some((v) => v.voiceURI === value)
   return (
     <label className="field">
-      <span>Voice (natural/online voices sound best; on Windows, Edge has the most natural Chinese voices)</span>
+      <span>Browser voice (for browser speech, and for text without a recording; natural/online voices sound best)</span>
       <select value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">
           {auto ? `Auto — ${auto.name}` : voices.length ? 'Auto — browser default' : 'Auto — no Chinese voice found on this device'}
@@ -161,6 +205,8 @@ export function SettingsModal() {
               </button>
             </span>
           </label>
+          <AudioStatusLine />
+          <AudioField value={settings.audioSource} onChange={(audioSource) => updateSettings({ audioSource })} />
           <VoiceField lang={pack.manifest.target.tts} value={settings.ttsVoice} onChange={(uri) => updateSettings({ ttsVoice: uri })} />
         </section>
         <section>

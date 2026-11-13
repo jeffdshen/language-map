@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { MapView } from './map/MapView'
 import { useStore } from './store'
+import { loadClips, setAudioSource } from './audio'
 import { setPreferredVoice } from './tts'
 import { AboutModal } from './ui/AboutModal'
 import { CharModal } from './ui/CharModal'
@@ -53,7 +54,11 @@ export default function App() {
   const popover = useStore((s) => s.selected !== null && !s.details)
   const ttsVoice = useStore((s) => s.save.settings.ttsVoice)
 
+  const audioSource = useStore((s) => s.save.settings.audioSource)
+
   useEffect(() => setPreferredVoice(ttsVoice), [ttsVoice])
+  useEffect(() => setAudioSource(audioSource), [audioSource])
+  useEffect(() => void loadClips(`${import.meta.env.BASE_URL}${PACK}/`), [])
 
   useEffect(() => {
     const { init, tick } = useStore.getState()

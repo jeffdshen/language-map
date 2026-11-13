@@ -1,5 +1,8 @@
 import { activeStages, STAGE_COUNT, type Progress, type QuestMode, type Rules, type SentenceKind, type WordProgress } from './progress'
 
+/** Where speech comes from (see app/src/audio.ts). */
+export type AudioSource = 'recorded' | 'browser'
+
 export type FogMode = 'off' | 'dim' | 'hidden'
 export type FogScope = 'words' | 'terrain'
 /** Pinyin under words on the map: auto = until a region's listening quests are done (always in listening mode). */
@@ -19,8 +22,10 @@ export interface Settings {
   mapPinyin: MapPinyin
   /** Text-to-speech rate (0.5–1.5). */
   ttsRate: number
-  /** voiceURI of the text-to-speech voice ('' = pick the best installed voice). */
+  /** voiceURI of the browser's text-to-speech voice ('' = pick the best installed voice). */
   ttsVoice: string
+  /** recorded: the pre-generated clips (browser speech only for text without one) · browser: browser speech. */
+  audioSource: AudioSource
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -32,6 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mapPinyin: 'auto',
   ttsRate: 0.85,
   ttsVoice: '',
+  audioSource: 'recorded',
 }
 
 export function rulesOf(settings: Settings): Rules {
@@ -117,6 +123,7 @@ export function cleanSettings(raw: unknown): Settings {
           : d.mapPinyin,
     ttsRate: clamp(r.ttsRate, 0.5, 1.5, d.ttsRate),
     ttsVoice: typeof r.ttsVoice === 'string' ? r.ttsVoice : d.ttsVoice,
+    audioSource: r.audioSource === 'browser' || r.audioSource === 'recorded' ? r.audioSource : d.audioSource,
   }
 }
 
