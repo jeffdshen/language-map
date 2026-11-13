@@ -22,6 +22,10 @@ has to carry the context.
 
 - Solo project: commit and push straight to `main` (no PRs). Every push deploys to GitHub Pages.
 - Commit in small steps with descriptive messages; push docs updates along with the code.
+- Speech clips are not in the repo. After changing the pack's words/sentences, the voice or
+  `pipeline/langmap/phonemes.py`, run `gh workflow run audio.yml` (about 30 min): it publishes
+  new clips and commits the pin in `pipeline/audio.lock.json` to `main`, so `git pull` after.
+  Until then, text without a clip falls back to browser speech. See `docs/audio.md`.
 
 ## Checks
 
@@ -33,6 +37,7 @@ cd pipeline && uv sync && uv run pytest -q && uv run ruff check . && uv run ruff
 ## Layout
 
 - `app/`: Vite + React + TypeScript game (see README "Repository layout").
-- `data/zh-en/`: committed language pack, built by `pipeline/` (`uv run langmap build`).
+- `data/zh-en/`: committed language pack, built by `pipeline/` (`uv run langmap build`);
+  `data/zh-en/audio/` (gitignored) is filled by the Pages deploy from the published clips.
 - `pipeline/`: offline, deterministic Python build; see `pipeline/README.md`.
 - `docs/design.md`: design notes, decisions and milestones; `docs/audio.md`: speech/audio.

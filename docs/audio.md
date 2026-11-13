@@ -1,6 +1,8 @@
 # Audio: investigation and design
 
-Status: **in progress** (see "Progress log" at the end). Started 2026-11-13.
+Status: **shipped** 2026-11-13: the site plays pre-generated clips (voice zf_001), with browser
+speech as the fallback. Open items are under "Decisions for the owner"; history in "Progress
+log".
 
 ## Problem
 
@@ -85,7 +87,9 @@ audio path as any video or music on the web, and behave the same on every device
   run again. It regenerates everything (free on public repos, ~20 parallel jobs); reusing the
   previous release's clips would be faster but risks keeping a clip whose reading changed.
 - **Browser speech as an option.** Kept as the fallback and as a Settings choice for people who
-  prefer their own system voices.
+  prefer their own system voices. If it stays silent on a machine, that is the engine/OS issue
+  described above and can't be fixed from the page; the recorded voice is the default for that
+  reason.
 
 ## Progress log
 
@@ -99,6 +103,13 @@ audio path as any video or music on the web, and behave the same on every device
   for words, `langmap audio` / `audio-pack` / `audio-check`. Word clips keyed by
   `hanzi|pinyin` in both app and pipeline (72 words share a `say` text with another reading).
   Next: pick the voice, Actions workflow to generate + publish, Pages deploy downloads it.
+- 2026-11-13: Voice zf_001 chosen (table above). First Speech clips run published
+  `audio-6f537c53e615` (31,250 clips, 257 MB) and pinned it; the Pages deploy serves it.
+  Verified: the deployed Pages artifact holds every clip and `index.json`; a recogniser on 60
+  random published sentence clips: 1.1% syllable error (misses are homophones and a name);
+  Chromium on the deployed build plays word and sentence clips at the right rate, and falls back
+  to browser speech for a missing clip. Not verified: listening by a person, Safari/iOS (the
+  unlock path is written for it but untested), and the owner's own Mac Chrome.
 
 ## Pipeline side (`pipeline/langmap/{phonemes,audio,audio_check}.py`)
 
@@ -180,6 +191,31 @@ use it for sentences only. For words, tone contrast (pitch, semitones, 6 sets of
 | Alone, longer style vector (index 40 / 80) | 4.4 / 4.8 | |
 | Carrier, speed 1.0 | 8.4 | 3.8 |
 | Carrier, speed 0.85 | 7.7 | 3.7 |
+
+### Voice choice
+
+Our phonemes, carrier for words, speed 0.85. Tone columns as above (24 words); word and sentence
+error from the recogniser on 40 random words and 30 random sentences (small samples: ±0.5% on
+sentences is noise).
+
+| Voice | Tone-2 − tone-4 rise | Tone-1 − tone-3 low | Word error | Sentence error |
+|---|---|---|---|---|
+| **zf_001** (chosen) | 7.7 | **3.7** | 31% | 1.0% |
+| zf_018 | 5.1 | 0.9 | 49% | 0.6% |
+| zf_040 | 9.5 | 1.8 | **26%** | 1.0% |
+| zf_073 | 8.6 | 0.3 | 61% | 1.6% |
+| zf_088 | 8.2 | 1.2 | 49% | 1.0% |
+| zm_010 | 10.8 | 0.5 | 58% | 1.0% |
+| zm_045 | **12.6** | 2.4 | 55% | 1.3% |
+| zm_091 | 9.9 | 2.0 | 58% | 0.6% |
+| zm_100 | 10.3 | 2.9 | 30% | 1.6% |
+
+zf_001 has the clearest third tone (the low dip learners most need to hear) with good word and
+sentence scores; zm_100 is a close second if a male voice is wanted.
+
+Throughput on GitHub's 4-core runners: a shard job (4 single-threaded processes, ~1,560 clips,
+~55 min of audio, ~13 MB) took 11–26 minutes (median 21; runner CPUs vary), and the whole first
+run (31,250 clips, ~18 h of audio, 257 MB) about 30 minutes including publishing.
 
 ## App side (`app/src/audio.ts`)
 
