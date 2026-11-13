@@ -16,6 +16,9 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest", "ruff"]
+# Speech clips (langmap audio; docs/audio.md). Not needed to build the pack or run tests.
+audio = ["onnxruntime", "lameenc"]
+audio-check = [{ include-group = "audio" }, "sherpa-onnx"]
 
 [project.scripts]
 langmap = "langmap.cli:main"

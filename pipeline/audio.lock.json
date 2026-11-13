@@ -1,0 +1,16 @@
+{
+  "kokoro-zh": {
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2",
+    "sha256": "259c9c8bc906d6078e4e0570421885dabb68b539c2f970fcbb890a58eeaf3e9c",
+    "name": "Kokoro-82M v1.1-zh (int8 ONNX export by sherpa-onnx)",
+    "homepage": "https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh",
+    "license": "Apache-2.0"
+  },
+  "sensevoice": {
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2",
+    "sha256": "7305f7905bfcf77fa0b39388a313f3da35c68d971661a65475b56fb2162c8e63",
+    "name": "SenseVoice Small (int8 ONNX export by sherpa-onnx); only for `langmap audio-check`",
+    "homepage": "https://github.com/FunAudioLLM/SenseVoice",
+    "license": "FunASR model license (used for checks, not redistributed)"
+  }
+}

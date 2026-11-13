@@ -21,8 +21,8 @@ class ChecksumError(RuntimeError):
     pass
 
 
-def load_lock() -> dict[str, dict]:
-    return json.loads(LOCK_FILE.read_text(encoding="utf-8"))
+def load_lock(lock_file: Path = LOCK_FILE) -> dict[str, dict]:
+    return json.loads(lock_file.read_text(encoding="utf-8"))
 
 
 def sha256_file(path: Path) -> str:
@@ -33,15 +33,15 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def cache_path(name: str) -> Path:
-    url = load_lock()[name]["url"]
+def cache_path(name: str, lock_file: Path = LOCK_FILE) -> Path:
+    url = load_lock(lock_file)[name]["url"]
     return CACHE_DIR / f"{name}--{url.rsplit('/', 1)[-1]}"
 
 
-def fetch(name: str) -> Path:
+def fetch(name: str, lock_file: Path = LOCK_FILE) -> Path:
     """Return a local path to the pinned source ``name``, downloading if needed."""
-    entry = load_lock()[name]
-    path = cache_path(name)
+    entry = load_lock(lock_file)[name]
+    path = cache_path(name, lock_file)
     if not path.exists():
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".part")
@@ -53,7 +53,7 @@ def fetch(name: str) -> Path:
     if actual != entry["sha256"]:
         raise ChecksumError(
             f"{name}: sha256 mismatch (expected {entry['sha256']}, got {actual}). "
-            f"Delete {path} to re-download, or update sources.lock.json deliberately."
+            f"Delete {path} to re-download, or update {lock_file.name} deliberately."
         )
     return path
 

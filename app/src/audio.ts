@@ -5,8 +5,10 @@ import * as tts from './tts'
  * Speech for the app: pre-generated clips (see docs/audio.md) played as ordinary media, falling back to the
  * browser's speech synthesis when there is no clip, a clip fails, or the player chose browser speech.
  *
- * Clips are named by a hash of the exact text they say (`clipName`), so the app needs no index and a clip can
- * never play for text that has since changed: new text simply has no clip yet and goes to browser speech.
+ * Clips are named by a hash of a key (`clipName`): the text itself for sentences, and the hanzi with the pinyin
+ * for words (`wordClip`), since words written alike can be read differently (得 dé, 得 děi). The app needs no
+ * list of clips, and a clip can never play for text or a reading that has since changed: there is simply no
+ * clip yet, and browser speech says it.
  */
 
 /** `audio/index.json`, written by `langmap audio` next to the clips. */
@@ -105,10 +107,15 @@ function setStatus(s: AudioStatus) {
   notify()
 }
 
-/** The URL of the clip saying `text`, if clips are loaded (whether that text has a clip is only known by trying). */
-export function clipUrl(text: string): string | null {
+/** The clip key of a word: its reading, not its `say` text (which only steers browser voices). */
+export function wordClip(w: { hanzi: string; pinyin: string }): string {
+  return `${w.hanzi}|${w.pinyin}`
+}
+
+/** The URL of the clip for `key`, if clips are loaded (whether there is one is only known by trying). */
+export function clipUrl(key: string): string | null {
   if (!pack) return null
-  const name = clipName(text)
+  const name = clipName(key)
   return `${pack.base}audio/${name.slice(0, 2)}/${name}.mp3?v=${encodeURIComponent(pack.index.version)}`
 }
 
@@ -170,14 +177,17 @@ function browser(text: string, lang: string, rate: number, why: Extract<AudioSta
   tts.speak(text, lang, rate)
 }
 
-/** Say `text`: its recorded clip when there is one, else with browser speech. `rate` 1 is the voice's normal pace. */
-export function speak(text: string, lang: string, rate = 0.9): void {
+/**
+ * Say `text`: the recorded clip for `clip` (the text itself, or `wordClip` of a word) when there is one, else
+ * browser speech. `rate` 1 is the voice's normal pace.
+ */
+export function speak(text: string, lang: string, rate = 0.9, clip = text): void {
   if (!text) return
   const id = ++token
   const a = getPlayer()
   a?.pause()
   if (source === 'browser') return browser(text, lang, rate, 'chosen')
-  const url = clipUrl(text)
+  const url = clipUrl(clip)
   if (!url || !a || !pack) return browser(text, lang, rate, 'no-pack')
   tts.stopSpeaking()
   let settled = false

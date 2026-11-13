@@ -6,6 +6,7 @@ import argparse
 import logging
 import time
 import warnings
+from pathlib import Path
 
 from .paths import DATA_DIR, REPORTS_DIR
 
@@ -71,6 +72,19 @@ def main() -> None:
     b.add_argument("--pack", default="zh-en")
     b.add_argument("--no-preview", action="store_true")
     sub.add_parser("fetch", help="download and verify all pinned sources")
+    a = sub.add_parser("audio", help="say every word and sentence into data/<pack>/audio")
+    a.add_argument("--pack", default="zh-en")
+    a.add_argument("--shard", default="0/1", help="i/N: only clips whose name hash is i mod N")
+    a.add_argument("--limit", type=int, help="at most this many clips (for trying things out)")
+    a.add_argument("--force", action="store_true", help="redo clips that already exist")
+    a.add_argument("--threads", type=int, default=0)
+    p = sub.add_parser("audio-pack", help="check all clips exist; write audio/index.json and a tar")
+    p.add_argument("--pack", default="zh-en")
+    p.add_argument("--tar", type=Path, help="also write audio/ to this tar and print its sha256")
+    c = sub.add_parser("audio-check", help="score the voice: recogniser error and tone contrast")
+    c.add_argument("--pack", default="zh-en")
+    c.add_argument("--voice")
+    c.add_argument("--sample", type=int, default=40)
     args = parser.parse_args()
     if args.cmd == "build":
         build(args.pack, preview=not args.no_preview)
@@ -79,6 +93,24 @@ def main() -> None:
 
         for name, path in fetch_all().items():
             print(f"{name}: {path}")
+    elif args.cmd == "audio":
+        from .audio import generate
+
+        i, n = (int(x) for x in args.shard.split("/"))
+        done = generate(DATA_DIR / args.pack, (i, n), args.limit, args.force, args.threads)
+        print(f"[audio] wrote {done} clips")
+    elif args.cmd == "audio-pack":
+        from .audio import make_tarball, write_index
+
+        print(f"[audio] index: {write_index(DATA_DIR / args.pack)}")
+        if args.tar:
+            print(f"[audio] {args.tar} sha256 {make_tarball(DATA_DIR / args.pack, args.tar)}")
+    elif args.cmd == "audio-check":
+        from .audio import VOICE, pack_clips
+        from .audio_check import check
+
+        clips = pack_clips(DATA_DIR / args.pack)
+        print(check(clips, args.voice or VOICE, args.sample))
 
 
 if __name__ == "__main__":

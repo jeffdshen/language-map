@@ -5,7 +5,7 @@ import { shortGloss } from '../logic/boss'
 import { Vis } from '../logic/explore'
 import { currentStage, KIND_STAGE, STAGES, stageDone, stageNeeds, type SentenceKind } from '../logic/progress'
 import { isCollected, useStore, type Reward } from '../store'
-import { canSpeak, onAudioChange, speak, stopSpeaking } from '../audio'
+import { canSpeak, onAudioChange, speak, stopSpeaking, wordClip } from '../audio'
 import { SentenceView, SpeakButton } from './common'
 import { levelLabel, sentencePinyin, sentenceText } from './text'
 
@@ -131,15 +131,16 @@ export function QuestCard({
   }, [data, pack])
 
   const spoken = typeof task === 'object' && task.mode !== 'done' ? (task.mode === 'sentence' ? sentenceText(task.s) : w.say) : null
+  const clip = typeof task === 'object' && task.mode === 'sentence' ? spoken : wordClip(w)
   const rate = settings.ttsRate
   const play = (slow = false) => {
-    if (spoken) speak(spoken, lang, slow ? rate * 0.65 : rate)
+    if (spoken) speak(spoken, lang, slow ? rate * 0.65 : rate, clip ?? undefined)
   }
 
   // Listening tasks start by playing the sentence (or the word), once per planned task.
   const autoplay = typeof task === 'object' && task.mode !== 'done' && task.kind === 'listen' ? spoken : null
   useEffect(() => {
-    if (autoplay) speak(autoplay, lang, rate)
+    if (autoplay) speak(autoplay, lang, rate, clip ?? undefined)
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- replay only for a new task, not on a rate change
   }, [autoplay, lang, plan])
 
@@ -255,7 +256,7 @@ export function QuestCard({
         <div className="pop-sub">
           <span className="pop-pinyin">
             {mystery ? null : listeningMode ? <span lang="zh-Hans">{w.hanzi}</span> : hidePinyin ? <span className="muted">?</span> : w.pinyin}
-            {mystery ? null : <SpeakButton text={w.say} />}
+            {mystery ? null : <SpeakButton text={w.say} clip={wordClip(w)} />}
             <span className="pop-level">{levelLabel(w.level)}</span>
           </span>
           {showGloss ? (

@@ -7,3 +7,5 @@ CONFIG_DIR = PIPELINE_DIR / "config"
 REPORTS_DIR = PIPELINE_DIR / "reports"
 DATA_DIR = REPO_ROOT / "data"
 LOCK_FILE = PIPELINE_DIR / "sources.lock.json"
+# Speech models, and the published clips the Pages deploy downloads (docs/audio.md).
+AUDIO_LOCK_FILE = PIPELINE_DIR / "audio.lock.json"

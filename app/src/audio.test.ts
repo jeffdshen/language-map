@@ -81,13 +81,16 @@ describe('speak', () => {
     expect(a.playbackRate).toBeCloseTo(0.65)
   })
 
-  it('falls back to browser speech when the text has no clip', async () => {
+  it('looks a word up by its reading, and falls back to saying its text when there is no clip', async () => {
     const { audio, tts } = await setup()
-    audio.speak('新词', 'zh-CN', 0.9)
+    // 还 huán is said to browser voices as 环, which they can't misread.
+    audio.speak('环', 'zh-CN', 0.9, audio.wordClip({ hanzi: '还', pinyin: 'huán' }))
     const a = FakeAudio.all[0]
+    expect(a.src).toBe(`${audio.clipUrl('还|huán')}`)
+    expect(a.src).not.toBe(audio.clipUrl('环'))
     a.error = { code: 4 }
     a.onerror?.()
-    expect(tts.speak).toHaveBeenCalledWith('新词', 'zh-CN', 0.9)
+    expect(tts.speak).toHaveBeenCalledWith('环', 'zh-CN', 0.9)
     expect(audio.audioStatus()).toEqual({ kind: 'browser', why: 'no-clip' })
     // A late error from the same clip does not speak twice.
     a.onerror?.()

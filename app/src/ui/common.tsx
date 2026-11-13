@@ -28,7 +28,20 @@ export function RegionTag({ region }: { region: number }) {
   )
 }
 
-export function SpeakButton({ text, label, slow, className }: { text: string; label?: string; slow?: boolean; className?: string }) {
+/** Plays `text` (or the recording for `clip`, see audio.ts). */
+export function SpeakButton({
+  text,
+  clip,
+  label,
+  slow,
+  className,
+}: {
+  text: string
+  clip?: string
+  label?: string
+  slow?: boolean
+  className?: string
+}) {
   const lang = useStore((s) => s.pack!.manifest.target.tts)
   const rate = useStore((s) => s.save.settings.ttsRate)
   return (
@@ -38,7 +51,7 @@ export function SpeakButton({ text, label, slow, className }: { text: string; la
       title={slow ? 'Play slowly' : 'Play audio'}
       onClick={(e) => {
         e.stopPropagation()
-        speak(text, lang, slow ? rate * 0.65 : rate)
+        speak(text, lang, slow ? rate * 0.65 : rate, clip)
       }}
     >
       {slow ? '🐢' : '🔊'}

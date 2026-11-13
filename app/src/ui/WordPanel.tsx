@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { wordClip } from '../audio'
 import { hanChars, loadSentences } from '../data/pack'
 import type { SentenceData } from '../data/types'
 import { nextHiddenWithChar, Vis } from '../logic/explore'
@@ -45,7 +46,7 @@ function WordPanelInner({ i }: { i: number }) {
         </div>
         {showForm ? (
           <div className="pinyin-big">
-            {w.pinyin} <SpeakButton text={w.say} />
+            {w.pinyin} <SpeakButton text={w.say} clip={wordClip(w)} />
           </div>
         ) : null}
         {showForm && w.trad && w.trad !== w.hanzi ? <div className="trad">Traditional: {w.trad}</div> : null}
