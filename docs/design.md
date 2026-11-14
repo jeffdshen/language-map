@@ -264,8 +264,8 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
     it (an earlier version blended regions toward gold and filled completed ones yellow, which
     made a finished map a flat yellow); a completed region (every word learned) keeps its color
     and gets a bold border and label. Discovered words show as white squares and learned ones as
-    gold. Not yet checked on screen with completed regions: the dark gold-brown border was
-    picked against yellow and may need retuning if it gets lost on some region colors.
+    gold. Checked on screen with a faked save: the dark gold-brown border still reads clearly on
+    pale, peach, orange and lavender regions, on both the world map and the minimap.
   - Thick level borders, region labels, and a "you are here" pin.
   - A side list of regions per level with learned/total bars.
   - Clicking a region or row flies there.
