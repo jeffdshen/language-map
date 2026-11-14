@@ -129,9 +129,24 @@ export function pathSpeed(cells: number): number {
   return Math.max(WALK_SPEED, Math.min(MAX_PATH_SPEED, cells / TRIP_TIME))
 }
 
-/** The landmark or hall within reach of (x, y), nearest first. */
-export function nearTarget(pack: Pack, view: MapView, hiddenFog: boolean, x: number, y: number): Target | null {
+/**
+ * The landmark or hall within reach of (x, y), nearest first. Word `keep` (the open dialog's) wins while it is
+ * in reach, so standing between two words doesn't flip the target away from the one being talked to.
+ */
+export function nearTarget(
+  pack: Pack,
+  view: MapView,
+  hiddenFog: boolean,
+  x: number,
+  y: number,
+  keep: number | null = null,
+): Target | null {
   const { world, wordAt, hallAt } = pack
+  const canTalk = (j: number) => !hiddenFog || view.vis[j] >= Vis.Frontier
+  if (keep !== null) {
+    const w = pack.words[keep]
+    if (w && Math.hypot(w.x - x, w.y - y) < REACH && canTalk(keep)) return { word: keep }
+  }
   let best: Target | null = null
   let bestD = HALL_REACH
   const cx = Math.round(x)
@@ -145,7 +160,7 @@ export function nearTarget(pack: Pack, view: MapView, hiddenFog: boolean, x: num
       const d = Math.hypot(cx + dx - x, cy + dy - y)
       if (d >= bestD) continue
       const j = wordAt[k]
-      if (j >= 0 && d < REACH && (!hiddenFog || view.vis[j] >= Vis.Frontier)) {
+      if (j >= 0 && d < REACH && canTalk(j)) {
         best = { word: j }
         bestD = d
       } else if (hallAt[k] >= 0) {

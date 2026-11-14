@@ -87,6 +87,15 @@ describe('player', () => {
     expect(HALL_REACH).toBeGreaterThan(2)
   })
 
+  it("keeps the open dialog's word as the target while it is in reach", () => {
+    // At (-1, 1) 大学 is nearest, but 学 (√2 away) is still in reach.
+    expect(nearTarget(pack, none, false, -1, 1)).toEqual({ word: 4 })
+    expect(nearTarget(pack, none, false, -1, 1, 0)).toEqual({ word: 0 })
+    // Out of reach (学习 is √17 away): the nearest thing again. Hidden fog still hides unexplored words.
+    expect(nearTarget(pack, none, false, -1, 1, 5)).toEqual({ word: 4 })
+    expect(nearTarget(pack, none, true, -1, 1, 0)).toEqual({ hall: 0 })
+  })
+
   it('points to the nearest unexplored word of a region, then unfinished ones', () => {
     const region = pack.words[0].region
     let p: Progress = reveal({}, pack.words[0].id, T)

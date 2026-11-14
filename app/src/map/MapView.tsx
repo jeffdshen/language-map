@@ -5,7 +5,7 @@ import { useStore } from '../store'
 import { emitCamera, loadCamera, saveCamera } from './camera'
 import { Minimap } from './Minimap'
 import { loadPlayer, nearTarget, nextQuestWord, Player, savePlayer } from './player'
-import { MapRenderer, type PanelMode } from './renderer'
+import { MapRenderer, type PanelMode, type Target } from './renderer'
 
 const MOVE_KEYS: Record<string, [number, number]> = {
   w: [0, -1],
@@ -27,6 +27,13 @@ function typing(e: KeyboardEvent): boolean {
 function panelMode(s: { selected: number | null; details: boolean }): PanelMode {
   return s.selected === null ? 'none' : s.details ? 'details' : 'popover'
 }
+
+/** The word whose dialog is open (it takes E, Space, Enter and N), if any. */
+function dialogWord(s: { selected: number | null; details: boolean }): number | null {
+  return s.selected !== null && !s.details ? s.selected : null
+}
+
+const isWord = (t: Target | null, i: number) => !!t && 'word' in t && t.word === i
 
 /** Imperative handle on the map, for the HUD buttons. */
 interface MapHandle {
@@ -66,10 +73,19 @@ export function MapView() {
       renderer.setPanel(panelMode(s))
     }
 
-    const updateNear = () => {
+    /** What the player can talk to; the open dialog's word stays it while in reach. */
+    const near = (): Target | null => {
       const s = useStore.getState()
-      if (!s.view) return
-      renderer.setNear(nearTarget(pack, s.view, s.save.settings.fogMode === 'hidden', player.x, player.y), keyHints)
+      if (!s.view) return null
+      return nearTarget(pack, s.view, s.save.settings.fogMode === 'hidden', player.x, player.y, dialogWord(s))
+    }
+
+    /** Mark what's in reach. While a word dialog is open, E goes to it, so nothing else is marked. */
+    const updateNear = (): Target | null => {
+      const t = near()
+      const open = dialogWord(useStore.getState())
+      renderer.setNear(open === null || isWord(t, open) ? t : null, keyHints)
+      return t
     }
 
     let saveTimer = 0
@@ -79,20 +95,26 @@ export function MapView() {
     }
 
     let lastCell = ''
-    /** After the player moves: update the region, what's in reach, and close a dialog left behind. */
+    /**
+     * After the player moves: update the region and what's in reach. Walking with the keys closes the word dialog
+     * once something else is in reach (so E always goes to what's marked), or when a word met on the map is left
+     * behind.
+     */
     const onMoved = (manual: boolean) => {
-      const s = useStore.getState()
       const cell = `${Math.round(player.x)},${Math.round(player.y)}`
       if (cell !== lastCell) {
         lastCell = cell
-        s.setFocus(player.x, player.y)
+        useStore.getState().setFocus(player.x, player.y)
       }
-      updateNear()
+      const t = updateNear()
       scheduleSave()
-      if (manual && s.selected !== null && s.selectedFrom === 'map' && !s.details) {
-        const w = pack.words[s.selected]
-        if (Math.hypot(w.x - player.x, w.y - player.y) > 3) s.select(null)
-      }
+      const s = useStore.getState()
+      const open = dialogWord(s)
+      if (!manual || open === null) return
+      const w = pack.words[open]
+      const elsewhere = t !== null && !isWord(t, open)
+      const leftBehind = s.selectedFrom === 'map' && Math.hypot(w.x - player.x, w.y - player.y) > 3
+      if (elsewhere || leftBehind) s.select(null)
     }
 
     // ---- the game loop: runs while a key is held or the player is walking somewhere
@@ -183,7 +205,14 @@ export function MapView() {
       ) {
         sync()
       }
-      if (s.view !== prev.view || s.save.settings !== prev.save.settings) updateNear()
+      if (
+        s.view !== prev.view ||
+        s.save.settings !== prev.save.settings ||
+        s.selected !== prev.selected ||
+        s.details !== prev.details
+      ) {
+        updateNear()
+      }
       if (s.camera && s.camera !== prev.camera) onCameraRequest()
       if (s.nextSeq !== prev.nextSeq) next()
     })
@@ -204,8 +233,7 @@ export function MapView() {
 
     const interact = () => {
       const s = useStore.getState()
-      if (!s.view) return
-      const t = nearTarget(pack, s.view, s.save.settings.fogMode === 'hidden', player.x, player.y)
+      const t = near()
       if (!t) return
       if ('word' in t) {
         if (s.selected !== t.word) s.select(t.word, 'map')

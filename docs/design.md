@@ -254,6 +254,18 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
     word with a quest nearby (skipping the last few visited).
   - `E`/Space interacts with the nearest landmark or hall in reach. The camera follows
     the player; dragging pans away and `C` re-centers.
+  - Only one thing takes `E` at a time, and the map marks it (`map/MapView.tsx`):
+    - While a word card is open, `E` goes to the card. The card's word stays the target while
+      it is in reach, even when a neighbour is nearer, and nothing else gets the ring or `E`
+      hint.
+    - Walking with the keys closes the card as soon as another landmark or hall comes into
+      reach, so the hint moves there and `E` opens it. A card opened on the map also closes
+      more than 3 cells away from its word.
+    - Click and `N` walks don't close the card on the way, because the card is for where
+      they're going.
+    - Before this, the card stayed open up to 3 cells away while the next word already showed
+      the `E` hint, so `E` collected a sentence for the old word instead of opening the new
+      one.
   - The position is saved per pack. `H` and fast travel (search, world map) put the player in
     front of the target.
 - **Minimap** (bottom right): the current region's name, level, kind and progress bar, a ⚑ Hall
