@@ -43,7 +43,7 @@ export function Minimap() {
       const oy = Math.round(H / 2 - (cam.y - b.y0 + 0.5) * K)
       g.imageSmoothingEnabled = false
       g.drawImage(image, ox, oy)
-      // Completed regions: a bold border around their yellow.
+      // Completed regions keep their color and get a bold border.
       const done = pack.world.regions.filter((r) => regionDone(r, view))
       if (done.length) {
         g.setTransform(dpr * K, 0, 0, dpr * K, dpr * ox, dpr * oy)

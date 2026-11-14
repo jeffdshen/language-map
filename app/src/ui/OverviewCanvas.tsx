@@ -29,8 +29,8 @@ const DRAG_SLOP = 6
 const LABEL_FONT = '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif'
 
 /**
- * The simplified world map scaled to fit its container. Completed regions (every word learned) are yellow with a
- * bold border and label. Reports the hovered/clicked cell; can highlight a region, show "you are here", and draw
+ * The simplified world map scaled to fit its container. Completed regions (every word learned) keep their color and
+ * get a bold border and label. Reports the hovered/clicked cell; can highlight a region, show "you are here", and draw
  * word markers. `crop` shows only part of the world (in cells). `zoomable` adds
  * wheel/pinch/keyboard zoom, drag to pan, and zoom buttons.
  */
@@ -135,7 +135,7 @@ export function OverviewCanvas({
           g.font = `${complete ? 900 : 700} ${font}px ${LABEL_FONT}`
           g.lineWidth = 3
           g.strokeStyle = 'rgba(255, 252, 244, 0.8)'
-          g.fillStyle = complete ? '#5a3a00' : view.regionSeen[r.id] > 0 ? 'rgba(40, 28, 12, 0.92)' : 'rgba(90, 80, 64, 0.6)'
+          g.fillStyle = view.regionSeen[r.id] > 0 ? 'rgba(40, 28, 12, 0.92)' : 'rgba(90, 80, 64, 0.6)'
           g.strokeText(r.zh, x, y)
           g.fillText(r.zh, x, y)
         }

@@ -45,10 +45,8 @@ const SEA: RGB = [46, 84, 124]
 const LAKE: RGB = [92, 146, 190]
 const MUTED: RGB = [196, 194, 188]
 
-/** A completed region (every word learned): bright yellow, with a bold border on the maps. */
-const DONE: RGB = [255, 214, 74]
-
-export const OVERVIEW_COLORS = { sea: rgb(SEA), learned: rgb(GOLD), done: rgb(DONE), doneBorder: 'rgba(110, 72, 0, 0.95)' }
+/** A completed region (every word learned) keeps its own color and gets this bold border on the maps. */
+export const OVERVIEW_COLORS = { sea: rgb(SEA), learned: rgb(GOLD), doneBorder: 'rgba(110, 72, 0, 0.95)' }
 
 /** Every word in the region is learned. */
 export function regionDone(r: Region, view: MapView): boolean {
@@ -56,15 +54,14 @@ export function regionDone(r: Region, view: MapView): boolean {
 }
 
 /**
- * Region color on the overview: parchment until you have explored some of it, then its own color, turning gold
- * as its words are learned, and bright yellow once all of them are.
+ * Region color on the overview: parchment until you have explored some of it, then its own color. Learning words
+ * doesn't tint it, so a finished map stays colorful; learned words show as gold squares and completed regions get a
+ * bold border instead.
  */
-export function regionFill(color: string, count: number, seen: number, learned: number): RGB {
-  if (count && learned >= count) return DONE
+export function regionFill(color: string, count: number, seen: number): RGB {
   const base = hexToRgb(color)
   const s = count ? Math.min(1, (seen / count) * 6) : 0
-  const l = count ? learned / count : 0
-  return mix(mix(PARCHMENT, base, 0.32 + 0.68 * s), GOLD, l * 0.7)
+  return mix(PARCHMENT, base, 0.32 + 0.68 * s)
 }
 
 export interface OverviewOptions {
@@ -88,7 +85,7 @@ export function renderOverview(pack: Pack, view: MapView, opts: OverviewOptions)
   const img = g.createImageData(canvas.width, canvas.height)
   const data = img.data
   const fills = world.regions.map((r) => {
-    const c = regionFill(r.color, r.count, view.regionSeen[r.id], view.regionLearned[r.id])
+    const c = regionFill(r.color, r.count, view.regionSeen[r.id])
     return opts.muted ? mix(c, MUTED, 0.65) : c
   })
   const isWater = world.groundCodes.map((c) => c === '~' || c === '=')

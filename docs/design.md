@@ -260,8 +260,12 @@ and `reports/zh-en.md` records them with lot and road counts. `reports/zh-en-pre
   button (takes you to the region's hall and opens it), plus a small overview with the viewport
   rectangle. Clicking it opens the world map.
 - **World map** (`M`):
-  - Every region filled by state: unexplored, explored, or learned. Discovered words show as
-    white squares and learned ones as gold.
+  - Every region is parchment until explored, then its own color. Learning words doesn't tint
+    it (an earlier version blended regions toward gold and filled completed ones yellow, which
+    made a finished map a flat yellow); a completed region (every word learned) keeps its color
+    and gets a bold border and label. Discovered words show as white squares and learned ones as
+    gold. Not yet checked on screen with completed regions: the dark gold-brown border was
+    picked against yellow and may need retuning if it gets lost on some region colors.
   - Thick level borders, region labels, and a "you are here" pin.
   - A side list of regions per level with learned/total bars.
   - Clicking a region or row flies there.

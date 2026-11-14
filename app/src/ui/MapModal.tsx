@@ -73,9 +73,9 @@ function MapModalInner() {
             )}
           </div>
           <p className="muted map-key">
-            <span className="key-sw parchment" /> unexplored <span className="key-sw explored" /> explored, turning{' '}
-            <span className="key-sw gold" /> gold as you learn its words <span className="key-sw done" /> completed: every
-            word learned (bold border) · outlined in white: the region you are pointing at (or in) · white squares are
+            <span className="key-sw parchment" /> unexplored <span className="key-sw explored" /> explored{' '}
+            <span className="key-sw done" /> completed: every word learned (bold border) · outlined in white: the
+            region you are pointing at (or in) · white squares are
             discovered words, gold ones learned. Thick borders separate HSK levels; the center is HSK 1. Scroll,
             pinch, or press +/− to zoom; drag to pan; 0 to fit.
           </p>

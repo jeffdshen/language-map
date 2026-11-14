@@ -2058,12 +2058,8 @@ table.sources td {
   background: #8fbf73;
 }
 
-.key-sw.gold {
-  background: var(--gold);
-}
-
 .key-sw.done {
-  background: #ffd64a;
+  background: #8fbf73;
   border: 2px solid #6e4800;
 }
 
